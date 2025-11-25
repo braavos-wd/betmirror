@@ -1,3 +1,4 @@
+
 import 'dotenv/config';
 import { loadEnv } from '../config/env.js';
 import { createPolymarketClient } from '../infrastructure/clob-client.factory.js';
@@ -8,6 +9,7 @@ import { NotificationService } from '../services/notification.service.js';
 import { FeeDistributorService } from '../services/fee-distributor.service.js';
 import { ConsoleLogger } from '../utils/logger.util.js';
 import { getUsdBalanceApprox, getPolBalance } from '../utils/get-balance.util.js';
+import { AlphaRegistryService } from '../services/alpha-registry.service.js';
 
 async function main(): Promise<void> {
   const logger = new ConsoleLogger();
@@ -47,8 +49,11 @@ async function main(): Promise<void> {
       usdcContractAddress: env.usdcContractAddress
   };
 
+  // For CLI, we use the HTTP Registry Service to talk to the Global Registry
+  const registryService = new AlphaRegistryService(env.registryApiUrl);
+
   const fundManager = new FundManagerService(client.wallet, fundManagerConfig, logger, notifier);
-  const feeDistributor = new FeeDistributorService(client.wallet, env, logger);
+  const feeDistributor = new FeeDistributorService(client.wallet, env, logger, registryService);
 
   try {
     const polBalance = await getPolBalance(client.wallet);

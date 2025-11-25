@@ -42,3 +42,8 @@ export interface UserRewardRecord {
   fromWallet: string;
   timestamp: string;
 }
+
+// Interface to decouple Data Access (DB vs HTTP)
+export interface IRegistryService {
+  getListerForWallet(walletAddress: string): Promise<string | null>;
+}

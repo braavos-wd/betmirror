@@ -1,12 +1,12 @@
 
 import axios from 'axios';
-import { TraderProfile } from '../domain/alpha.types';
+import { TraderProfile, IRegistryService } from '../domain/alpha.types.js';
 
 /**
- * Client-side service to talk to the Global Registry API.
- * Uses relative paths by default to support production deployments where frontend and backend share a domain.
+ * Client-side/CLI service to talk to the Global Registry API via HTTP.
+ * Used when no direct DB access is available (e.g. Browser or Headless CLI).
  */
-export class AlphaRegistryService {
+export class AlphaRegistryService implements IRegistryService {
   private apiUrl: string = '/api';
 
   constructor(apiUrl?: string) {
@@ -50,4 +50,5 @@ export class AlphaRegistryService {
   }
 }
 
+// Default export for backward compatibility if needed, but preferred to instantiate
 export const alphaRegistry = new AlphaRegistryService();

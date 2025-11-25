@@ -1,3 +1,4 @@
+
 import express from 'express';
 import cors from 'cors';
 import { fileURLToPath } from 'url';
@@ -7,6 +8,7 @@ import { BotEngine, BotConfig } from './bot-engine.js';
 import { ProxyWalletConfig } from '../domain/wallet.types.js';
 import { connectDB, User, Registry, Trade, Feedback, BridgeTransaction } from '../database/index.js';
 import { loadEnv } from '../config/env.js';
+import { DbRegistryService } from '../services/db-registry.service.js';
 
 // ESM compatibility
 const __filename = fileURLToPath(import.meta.url);
@@ -15,6 +17,9 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 const ENV = loadEnv();
+
+// Service Singletons
+const dbRegistryService = new DbRegistryService();
 
 // In-Memory Bot Instances (Runtime State)
 const ACTIVE_BOTS = new Map<string, BotEngine>();
@@ -33,16 +38,14 @@ async function startUserBot(userId: string, config: BotConfig) {
         ACTIVE_BOTS.get(userId)?.stop();
     }
 
-    // Default start cursor to now if not provided, to prevent replay
+    // Determine start cursor to prevent gaps or replays. 
+    // If config has explicit startCursor (from manual start), use it.
+    // Otherwise, it defaults to NOW in the engine, but we want it to handle restarts gracefully.
     const startCursor = config.startCursor || Math.floor(Date.now() / 1000);
     
-    // Ensure the bot knows where the API is (Internal communication)
-    // In a monolithic deployment, it's this same server.
-    const registryApiUrl = `http://localhost:${PORT}/api`;
-    
-    const engineConfig = { ...config, startCursor, registryApiUrl };
+    const engineConfig = { ...config, startCursor };
 
-    const engine = new BotEngine(engineConfig, {
+    const engine = new BotEngine(engineConfig, dbRegistryService, {
         onPositionsUpdate: async (positions) => {
             await User.updateOne({ address: userId }, { activePositions: positions });
         },
@@ -216,7 +219,8 @@ app.post('/api/bot/start', async (req: any, res: any) => {
         autoCashout: autoCashout,
         activePositions: user.activePositions || [],
         stats: user.stats,
-        zeroDevRpc: process.env.ZERODEV_RPC 
+        zeroDevRpc: process.env.ZERODEV_RPC,
+        startCursor: Math.floor(Date.now() / 1000) // Explicit manual start resets cursor
       };
 
       await startUserBot(userId, config);
@@ -355,15 +359,23 @@ async function restoreBots() {
 
         for (const user of activeUsers) {
             if (user.activeBotConfig && user.proxyWallet) {
+                 
+                 // Smart Restore: Check last trade time to ensure no gap in data monitoring
+                 const lastTrade = await Trade.findOne({ userId: user.address }).sort({ timestamp: -1 });
+                 
+                 // If we have history, resume from 1 second after last trade.
+                 // If no history, assume fresh start (or cap lookup to 1 hour ago)
+                 const lastTime = lastTrade ? Math.floor(lastTrade.timestamp.getTime() / 1000) + 1 : Math.floor(Date.now() / 1000) - 3600;
+                 
                  const config: BotConfig = {
                      ...user.activeBotConfig,
                      walletConfig: user.proxyWallet,
                      stats: user.stats,
                      activePositions: user.activePositions,
-                     startCursor: Math.floor(Date.now() / 1000) // Reset cursor to now on restart to avoid replay
+                     startCursor: lastTime
                  };
                  await startUserBot(user.address, config);
-                 console.log(`✅ Restored Bot: ${user.address}`);
+                 console.log(`✅ Restored Bot: ${user.address} (Resuming from ${new Date(lastTime*1000).toISOString()})`);
             }
         }
     } catch (e) {

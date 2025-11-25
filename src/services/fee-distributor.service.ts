@@ -1,8 +1,8 @@
+
 import { Wallet, Contract, parseUnits } from 'ethers';
 import { Logger } from '../utils/logger.util.js';
 import { RuntimeEnv } from '../config/env.js';
-import { FeeDistributionEvent } from '../domain/alpha.types.js';
-import { alphaRegistry } from './alpha-registry.service.js';
+import { FeeDistributionEvent, IRegistryService } from '../domain/alpha.types.js';
 
 const USDC_ABI = [
   'function transfer(address to, uint256 amount) returns (bool)',
@@ -14,13 +14,10 @@ export class FeeDistributorService {
   constructor(
     private wallet: Wallet,
     private env: RuntimeEnv,
-    private logger: Logger
+    private logger: Logger,
+    private registryService: IRegistryService
   ) {
     this.usdcContract = new Contract(env.usdcContractAddress, USDC_ABI, wallet);
-    // Ensure the registry client knows where to look
-    if(env.registryApiUrl) {
-        alphaRegistry.setApiUrl(env.registryApiUrl);
-    }
   }
 
   /**
@@ -33,12 +30,11 @@ export class FeeDistributorService {
   ): Promise<FeeDistributionEvent | null> {
     if (netProfitUsdc <= 0) return null;
 
-    // 1. Lookup Lister
-    const listerAddress = await alphaRegistry.getListerForWallet(traderAddressWeCopied);
+    // 1. Lookup Lister via injected service (DB or HTTP)
+    const listerAddress = await this.registryService.getListerForWallet(traderAddressWeCopied);
 
     if (!listerAddress) {
-        // No lister means no fee for them. We might still pay admin fee, 
-        // but for this logic we'll skip if no registry entry found to keep it simple.
+        // No lister means no fee for them.
         return null;
     }
 

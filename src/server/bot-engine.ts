@@ -8,7 +8,7 @@ import { FundManagerService, FundManagerConfig } from '../services/fund-manager.
 import { FeeDistributorService } from '../services/fee-distributor.service.js';
 import { ZeroDevService } from '../services/zerodev.service.js';
 import { TradeHistoryEntry, ActivePosition } from '../domain/trade.types.js';
-import { CashoutRecord, FeeDistributionEvent } from '../domain/alpha.types.js';
+import { CashoutRecord, FeeDistributionEvent, IRegistryService } from '../domain/alpha.types.js';
 import { UserStats } from '../domain/user.types.js';
 import { ProxyWalletConfig } from '../domain/wallet.types.js'; 
 import { ClobClient, Chain, ApiKeyCreds } from '@polymarket/clob-client';
@@ -92,7 +92,6 @@ export interface BotConfig {
   polymarketApiPassphrase?: string;
   // Restart Logic
   startCursor?: number; // Timestamp to resume from
-  registryApiUrl?: string; // URL for internal API calls
 }
 
 export interface BotCallbacks {
@@ -111,7 +110,6 @@ export class BotEngine {
   private watchdogTimer?: NodeJS.Timeout;
   
   private logs: any[] = [];
-  // History is now primarily stored in DB, we only keep recent logs here if needed
   private activePositions: ActivePosition[] = [];
   
   private stats: UserStats = {
@@ -125,6 +123,7 @@ export class BotEngine {
   
   constructor(
     private config: BotConfig,
+    private registryService: IRegistryService,
     private callbacks?: BotCallbacks
   ) {
       if (config.activePositions) {
@@ -198,7 +197,6 @@ export class BotEngine {
         enableNotifications: this.config.enableNotifications,
         adminRevenueWallet: process.env.ADMIN_REVENUE_WALLET || '0x0000000000000000000000000000000000000000',
         usdcContractAddress: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
-        registryApiUrl: this.config.registryApiUrl || 'http://localhost:3000/api'
       };
 
       // --- ACCOUNT STRATEGY SELECTION ---
@@ -262,7 +260,7 @@ export class BotEngine {
       };
 
       const fundManager = new FundManagerService(this.client.wallet, fundManagerConfig, logger, notifier);
-      const feeDistributor = new FeeDistributorService(this.client.wallet, env, logger);
+      const feeDistributor = new FeeDistributorService(this.client.wallet, env, logger, this.registryService);
       
       this.executor = new TradeExecutorService({
         client: this.client,

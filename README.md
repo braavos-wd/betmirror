@@ -1,15 +1,11 @@
 
-```
-  ____  _____ _____   __  __   _   ____  ____   ___  ____  
- | __ )| ____|_   _| |  \/  | | | |  _ \|  _ \ / _ \|  _ \ 
- |  _ \|  _|   | |   | |\/| | | | | |_) | |_) | | | | |_) |
- | |_) | |___  | |   | |  | | | | |  _ <|  _ <| |_| |  _ < 
- |____/|_____| |_|   |_|  |_| |_| |_| \_\_| \_\\___/|_| \_\
-                                                           
-              >>> PRO CLOUD TERMINAL v3.0 <<<
-```
+# Bet Mirror | Pro Cloud Terminal
 
-> **The world's first Non-Custodial, AI-Powered, Server-Side Copy Trading Platform for Polymarket.**
+![Bet Mirror Header](./docs/assets/header.png)
+
+**The world's first AI-powered, 24/7 server-side copy trading platform for Polymarket.**
+
+Developed by **PolyCafe**.
 
 ![License](https://img.shields.io/badge/license-Apache_2.0-blue)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)
@@ -70,18 +66,18 @@ The platform uses a hybrid architecture combining the speed of centralized execu
 
 ```mermaid
 graph TD
-    User[User / Wallet] -->|Signs Session Key| React[Web Terminal]
-    React -->|Encrypted Key| API[Node.js API Server]
+    User["User / Wallet"] -->|"Signs Session Key"| React["Web Terminal"]
+    React -->|"Encrypted Key"| API["Node.js API Server"]
     
     subgraph "Cloud Infrastructure"
-        API -->|Persist State| DB[(MongoDB Atlas)]
-        API -->|AI Analysis| Gemini[Gemini 2.5 Flash]
-        API -->|Bridge Quotes| LiFi[Li.Fi Protocol]
+        API -->|"Persist State"| DB[("MongoDB Atlas")]
+        API -->|"AI Analysis"| Gemini["Gemini 2.5 Flash"]
+        API -->|"Bridge Quotes"| LiFi["Li.Fi Protocol"]
     end
     
     subgraph "Blockchain (Polygon)"
-        API -->|Execute Trade (Session Key)| SmartAccount[ZeroDev Smart Account]
-        SmartAccount -->|Interact| Poly[Polymarket CTF]
+        API -->|"Execute Trade (Session Key)"| SmartAccount["ZeroDev Smart Account"]
+        SmartAccount -->|"Interact"| Poly["Polymarket CTF"]
     end
 ```
 
