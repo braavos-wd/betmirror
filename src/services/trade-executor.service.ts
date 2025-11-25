@@ -1,0 +1,174 @@
+
+import type { ClobClient } from '@polymarket/clob-client';
+import { Wallet, Contract, MaxUint256 } from 'ethers';
+import type { RuntimeEnv } from '../config/env.js';
+import type { Logger } from '../utils/logger.util.js';
+import type { TradeSignal, ActivePosition } from '../domain/trade.types.js';
+import { computeProportionalSizing } from '../config/copy-strategy.js';
+import { postOrder } from '../utils/post-order.util.js';
+import { getUsdBalanceApprox, getPolBalance } from '../utils/get-balance.util.js';
+import { httpGet } from '../utils/http.js';
+
+export type TradeExecutorDeps = {
+  client: ClobClient & { wallet: Wallet };
+  proxyWallet: string;
+  env: RuntimeEnv;
+  logger: Logger;
+};
+
+interface Position {
+  conditionId: string;
+  initialValue: number;
+  currentValue: number;
+}
+
+// Polymarket CTF Exchange Address (Polygon)
+const POLYMARKET_EXCHANGE = '0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E';
+const USDC_ABI = [
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function approve(address spender, uint256 amount) returns (bool)'
+];
+
+export class TradeExecutorService {
+  private readonly deps: TradeExecutorDeps;
+  private usdcContract: Contract;
+
+  constructor(deps: TradeExecutorDeps) {
+    this.deps = deps;
+    this.usdcContract = new Contract(deps.env.usdcContractAddress, USDC_ABI, deps.client.wallet);
+  }
+
+  async ensureAllowance(): Promise<boolean> {
+    const { logger, client } = this.deps;
+    try {
+      const allowance = await this.usdcContract.allowance(client.wallet.address, POLYMARKET_EXCHANGE);
+      
+      // If allowance is less than 1 million USDC, assume it needs approval (infinity)
+      if (allowance < BigInt(1000000 * 1000000)) {
+        logger.info('🔓 Token Allowance Low. Auto-Approving Polymarket Exchange...');
+        const tx = await this.usdcContract.approve(POLYMARKET_EXCHANGE, MaxUint256);
+        logger.info(`⏳ Approval Tx Sent: ${tx.hash}`);
+        await tx.wait();
+        logger.info('✅ USDC Auto-Approved for Trading!');
+        return true;
+      }
+      
+      logger.info('✅ USDC Allowance Active');
+      return true;
+    } catch (e) {
+      logger.error('Failed to check/set allowance', e as Error);
+      return false;
+    }
+  }
+
+  async revokeAllowance(): Promise<boolean> {
+      const { logger } = this.deps;
+      try {
+          logger.info('🔒 Revoking Token Allowance...');
+          const tx = await this.usdcContract.approve(POLYMARKET_EXCHANGE, 0);
+          logger.info(`⏳ Revoke Tx Sent: ${tx.hash}`);
+          await tx.wait();
+          logger.info('✅ Allowance Revoked. Bot cannot trade.');
+          return true;
+      } catch (e) {
+          logger.error('Failed to revoke allowance', e as Error);
+          return false;
+      }
+  }
+
+  /**
+   * Manually exit a position (e.g. for Auto TP or Stop Loss)
+   * Independent of the copy target's actions.
+   */
+  async executeManualExit(position: ActivePosition, currentPrice: number): Promise<boolean> {
+      const { logger, client } = this.deps;
+      try {
+          logger.info(`📉 Executing Manual Exit (Auto-TP) for ${position.tokenId} @ ${currentPrice}`);
+          
+          await postOrder({
+              client,
+              marketId: position.marketId,
+              tokenId: position.tokenId,
+              outcome: position.outcome as any,
+              side: 'SELL',
+              sizeUsd: position.sizeUsd // Sell full size
+          });
+          
+          return true;
+      } catch (e) {
+          logger.error(`Failed to execute manual exit`, e as Error);
+          return false;
+      }
+  }
+
+  async copyTrade(signal: TradeSignal): Promise<void> {
+    const { logger, env, client } = this.deps;
+    try {
+      const yourUsdBalance = await getUsdBalanceApprox(client.wallet, env.usdcContractAddress);
+      const polBalance = await getPolBalance(client.wallet);
+      const traderBalance = await this.getTraderBalance(signal.trader);
+
+      logger.info(`Balance check - POL: ${polBalance.toFixed(4)} POL, USDC: ${yourUsdBalance.toFixed(2)} USDC`);
+
+      const sizing = computeProportionalSizing({
+        yourUsdBalance,
+        traderUsdBalance: traderBalance,
+        traderTradeUsd: signal.sizeUsd,
+        multiplier: env.tradeMultiplier,
+      });
+
+      logger.info(
+        `${signal.side} ${sizing.targetUsdSize.toFixed(2)} USD`,
+      );
+
+      // Balance validation before executing trade
+      const requiredUsdc = sizing.targetUsdSize;
+      const minPolForGas = 0.01; // Minimum POL needed for gas
+
+      if (signal.side === 'BUY') {
+        if (yourUsdBalance < requiredUsdc) {
+          logger.error(
+            `Insufficient USDC balance. Required: ${requiredUsdc.toFixed(2)} USDC, Available: ${yourUsdBalance.toFixed(2)} USDC`,
+          );
+          return;
+        }
+      }
+
+      if (polBalance < minPolForGas) {
+        logger.error(
+          `Insufficient POL balance for gas. Required: ${minPolForGas} POL, Available: ${polBalance.toFixed(4)} POL`,
+        );
+        return;
+      }
+
+      await postOrder({
+        client,
+        marketId: signal.marketId,
+        tokenId: signal.tokenId,
+        outcome: signal.outcome,
+        side: signal.side,
+        sizeUsd: sizing.targetUsdSize,
+      });
+      logger.info(`Successfully executed ${signal.side} order for ${sizing.targetUsdSize.toFixed(2)} USD`);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      if (errorMessage.includes('closed') || errorMessage.includes('resolved') || errorMessage.includes('No orderbook')) {
+        logger.warn(`Skipping trade - Market ${signal.marketId} is closed or resolved: ${errorMessage}`);
+      } else {
+        logger.error(`Failed to copy trade: ${errorMessage}`, err as Error);
+      }
+    }
+  }
+
+  private async getTraderBalance(trader: string): Promise<number> {
+    try {
+      const positions: Position[] = await httpGet<Position[]>(
+        `https://data-api.polymarket.com/positions?user=${trader}`,
+      );
+      const totalValue = positions.reduce((sum, pos) => sum + (pos.currentValue || pos.initialValue || 0), 0);
+      return Math.max(100, totalValue);
+    } catch {
+      return 1000;
+    }
+  }
+}
