@@ -1619,7 +1619,7 @@ const Landing = ({ onConnect, theme, toggleTheme }: { onConnect: () => void, the
             </div>
             
             {/* Scroll Indicator */}
-            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 animate-bounce opacity-20">
+            <div className="absolute bottom-12 left-1/2 -translate-x-1/2 animate-bounce opacity-20">
                 <ChevronDown className="text-gray-400 w-6 h-6"/>
             </div>
 
