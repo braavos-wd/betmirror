@@ -1592,13 +1592,13 @@ const Landing = ({ onConnect, theme, toggleTheme }: { onConnect: () => void, the
                 {/* Trust Badges */}
                 <div className="mt-12 flex gap-8 opacity-40 animate-in fade-in duration-1000 delay-500">
                     <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-gray-500">
-                        <Shield size={12}/> Secure-AA
+                        <Shield size={12}/> Secure
                     </div>
                     <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-gray-500">
-                        <ZapIcon size={12}/> Autonomous
+                        <ZapIcon size={12}/> Fast
                     </div>
                     <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-gray-500">
-                        <Globe size={12}/> Cross-Chain
+                        <Globe size={12}/> Global
                     </div>
                 </div>
 
