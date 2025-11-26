@@ -629,25 +629,136 @@ const App = () => {
   // --- VIEW: LANDING ---
   if (!isConnected) {
       return (
-          <div className="min-h-screen bg-white dark:bg-[#050505] flex flex-col items-center justify-center text-gray-900 dark:text-white p-4 relative overflow-hidden transition-colors duration-200">
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-blue-100 via-white to-white dark:from-blue-900/20 dark:via-[#050505] dark:to-[#050505]"></div>
-              
-              {/* Light/Dark Toggle for Landing */}
-              <button onClick={toggleTheme} className="absolute top-6 right-6 p-3 rounded-full bg-gray-200 dark:bg-gray-800 text-gray-800 dark:text-white hover:scale-110 transition-transform z-20 shadow-lg">
-                  {theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}
-              </button>
+          <div className="fixed inset-0 z-[100] bg-white dark:bg-[#050505] overflow-y-auto overflow-x-hidden">
+              {/* Ambient Background */}
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-100/50 via-white to-white dark:from-blue-900/20 dark:via-[#050505] dark:to-[#050505] pointer-events-none"></div>
+              <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-100 contrast-150 pointer-events-none mix-blend-overlay"></div>
 
-              <div className="relative z-10 text-center space-y-8 max-w-lg">
-                  <div className="w-20 h-20 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-2xl mx-auto flex items-center justify-center shadow-[0_0_40px_rgba(37,99,235,0.4)] animate-pulse">
-                      <Activity size={40} className="text-white" />
+              <div className="relative min-h-screen flex flex-col items-center justify-center p-6">
+                  
+                  {/* Header / Branding */}
+                  <div className="text-center space-y-8 max-w-4xl w-full animate-in fade-in slide-in-from-bottom-8 duration-700">
+                      
+                      {/* Logo */}
+                      <div className="group relative w-24 h-24 mx-auto cursor-pointer">
+                          <div className="absolute inset-0 bg-blue-500 rounded-3xl blur-2xl opacity-20 group-hover:opacity-40 transition-opacity duration-500"></div>
+                          <div className="relative w-full h-full bg-gradient-to-tr from-blue-600 to-indigo-700 rounded-3xl flex items-center justify-center shadow-2xl shadow-blue-500/20 transform group-hover:scale-105 transition-all duration-300">
+                              <Activity size={48} className="text-white" />
+                          </div>
+                      </div>
+
+                      {/* Title Text */}
+                      <div>
+                          <h1 className="text-5xl md:text-7xl font-black tracking-tighter text-gray-900 dark:text-white mb-6 drop-shadow-sm">
+                              BET MIRROR <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-500">PRO</span>
+                          </h1>
+                          <p className="text-lg md:text-2xl text-gray-500 dark:text-gray-400 font-medium max-w-2xl mx-auto leading-relaxed">
+                              The institutional-grade prediction market terminal. <br/>
+                              <span className="text-gray-900 dark:text-gray-200">Non-Custodial. AI-Powered. 24/7 Cloud Execution.</span>
+                          </p>
+                      </div>
+
+                      {/* CTA */}
+                      <div className="max-w-md mx-auto w-full pt-4">
+                          <button 
+                              onClick={handleConnect} 
+                              className="group relative w-full py-5 bg-gray-900 dark:bg-white text-white dark:text-black font-bold text-lg rounded-2xl hover:shadow-2xl hover:shadow-blue-500/20 hover:-translate-y-1 transition-all duration-300 overflow-hidden"
+                          >
+                              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-in-out"></div>
+                              <span className="relative flex items-center justify-center gap-3">
+                                  <Wallet className="w-6 h-6" /> Connect Terminal
+                              </span>
+                          </button>
+                          <div className="flex justify-center gap-6 mt-4 text-[10px] uppercase tracking-widest font-bold text-gray-400">
+                              <span className="flex items-center gap-1"><Shield size={10}/> Audited</span>
+                              <span className="flex items-center gap-1"><Zap size={10}/> Gasless</span>
+                              <span className="flex items-center gap-1"><Globe size={10}/> Global</span>
+                          </div>
+                      </div>
+
+                      {/* Divider */}
+                      <div className="w-full max-w-xs mx-auto h-px bg-gradient-to-r from-transparent via-gray-200 dark:via-gray-800 to-transparent my-12"></div>
+
+                      {/* Supported Chains - Social Proof */}
+                      <div className="space-y-6">
+                          <p className="text-sm font-semibold text-gray-500 dark:text-gray-500 uppercase tracking-widest">
+                              Built for Prediction Markets on
+                          </p>
+                          <div className="flex flex-wrap justify-center items-center gap-3 md:gap-4 px-4">
+                              {[
+                                  { name: 'Polygon', color: 'bg-purple-500' },
+                                  { name: 'Ethereum', color: 'bg-blue-400' },
+                                  { name: 'Base', color: 'bg-blue-600' },
+                                  { name: 'Arbitrum', color: 'bg-sky-500' },
+                                  { name: 'BSC', color: 'bg-yellow-500' },
+                                  { name: 'Solana', color: 'bg-green-500' }
+                              ].map((chain) => (
+                                  <div key={chain.name} className="flex items-center gap-2 px-4 py-2 rounded-full bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 backdrop-blur-sm hover:bg-white dark:hover:bg-white/10 transition-colors cursor-default">
+                                      <div className={`w-2 h-2 rounded-full ${chain.color} shadow-[0_0_8px_currentColor]`}></div>
+                                      <span className="text-xs font-bold text-gray-700 dark:text-gray-300">{chain.name}</span>
+                                  </div>
+                              ))}
+                          </div>
+                      </div>
+
+                      {/* Markets Status Grid */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto pt-8 text-left">
+                          
+                          {/* Active Market Card */}
+                          <div className="relative overflow-hidden p-6 rounded-3xl bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-white/10 shadow-xl hover:shadow-2xl hover:border-blue-500/30 transition-all duration-300 group">
+                              <div className="absolute top-0 right-0 p-4 opacity-5 transform group-hover:scale-110 transition-transform duration-500">
+                                  <TrendingUp size={100} />
+                              </div>
+                              <div className="relative z-10">
+                                  <div className="flex items-center gap-2 mb-4">
+                                      <span className="relative flex h-2.5 w-2.5">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+                                      </span>
+                                      <span className="text-xs font-bold text-green-600 dark:text-green-400 uppercase tracking-wider">Live Integration</span>
+                                  </div>
+                                  <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Polymarket</h3>
+                                  <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-4">Current Copy Trading Volume Leader</p>
+                                  <div className="inline-flex items-baseline gap-2 px-3 py-1 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-white/5">
+                                      <Users size={14} className="text-gray-400"/>
+                                      <span className="text-lg font-mono font-bold text-gray-900 dark:text-white">1.2M+</span>
+                                      <span className="text-[10px] text-gray-500 uppercase font-bold">Users</span>
+                                  </div>
+                              </div>
+                          </div>
+
+                          {/* Coming Soon Card */}
+                          <div className="relative overflow-hidden p-6 rounded-3xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/5 opacity-90 hover:opacity-100 transition-opacity duration-300">
+                              <div className="relative z-10">
+                                  <div className="flex items-center gap-2 mb-4">
+                                      <span className="w-2.5 h-2.5 rounded-full bg-yellow-500"></span>
+                                      <span className="text-xs font-bold text-yellow-600 dark:text-yellow-500 uppercase tracking-wider">Coming Soon</span>
+                                  </div>
+                                  <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">PredictBase</h3>
+                                  <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-4">Next-Gen Sports & Crypto Markets</p>
+                                  <div className="inline-flex items-baseline gap-2 px-3 py-1 rounded-lg bg-white/50 dark:bg-white/5 border border-gray-200 dark:border-white/5">
+                                      <Users size={14} className="text-gray-400"/>
+                                      <span className="text-lg font-mono font-bold text-gray-900 dark:text-white">85k+</span>
+                                      <span className="text-[10px] text-gray-500 uppercase font-bold">Waitlist</span>
+                                  </div>
+                              </div>
+                          </div>
+
+                      </div>
+
+                      {/* Suggestion Input */}
+                      <div className="pt-8 pb-12">
+                          <div className="inline-flex flex-col items-center gap-3 group cursor-pointer">
+                              <div className="p-3 rounded-full bg-gray-100 dark:bg-white/5 text-gray-400 group-hover:text-blue-500 group-hover:scale-110 transition-all duration-300">
+                                  <MessageSquare size={20} />
+                              </div>
+                              <p className="text-sm font-medium text-gray-500 group-hover:text-gray-800 dark:group-hover:text-white transition-colors">
+                                  What would you like to see? <span className="underline decoration-dotted underline-offset-4">Suggest here...</span>
+                              </p>
+                          </div>
+                      </div>
+
                   </div>
-                  <div>
-                      <h1 className="text-4xl font-bold tracking-tight mb-2">BET MIRROR <span className="text-blue-600 dark:text-blue-500">PRO</span></h1>
-                      <p className="text-gray-600 dark:text-gray-500">AI-Powered Copy Trading with Non-Custodial Smart Accounts.</p>
-                  </div>
-                  <button onClick={handleConnect} className="w-full py-4 bg-black dark:bg-white text-white dark:text-black font-bold rounded-xl hover:opacity-80 transition-all flex items-center justify-center gap-3 shadow-xl">
-                      <Wallet size={20}/> CONNECT WALLET
-                  </button>
               </div>
           </div>
       );
@@ -1538,19 +1649,136 @@ const App = () => {
 };
 
 const Landing = ({ onConnect }: { onConnect: () => void }) => (
-    <div className="fixed inset-0 z-[100] bg-white dark:bg-[#050505] flex flex-col items-center justify-center text-gray-900 dark:text-white p-4">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-blue-100 via-white to-white dark:from-blue-900/20 dark:via-[#050505] dark:to-[#050505]"></div>
-        <div className="relative z-10 text-center space-y-8 max-w-lg">
-            <div className="w-24 h-24 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-2xl mx-auto flex items-center justify-center shadow-2xl animate-bounce">
-                <Activity size={48} className="text-white"/>
+    <div className="fixed inset-0 z-[100] bg-white dark:bg-[#050505] overflow-y-auto overflow-x-hidden">
+        {/* Ambient Background */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-100/50 via-white to-white dark:from-blue-900/20 dark:via-[#050505] dark:to-[#050505] pointer-events-none"></div>
+        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-100 contrast-150 pointer-events-none mix-blend-overlay"></div>
+
+        <div className="relative min-h-screen flex flex-col items-center justify-center p-6">
+            
+            {/* Header / Branding */}
+            <div className="text-center space-y-8 max-w-4xl w-full animate-in fade-in slide-in-from-bottom-8 duration-700">
+                
+                {/* Logo */}
+                <div className="group relative w-24 h-24 mx-auto cursor-pointer">
+                    <div className="absolute inset-0 bg-blue-500 rounded-3xl blur-2xl opacity-20 group-hover:opacity-40 transition-opacity duration-500"></div>
+                    <div className="relative w-full h-full bg-gradient-to-tr from-blue-600 to-indigo-700 rounded-3xl flex items-center justify-center shadow-2xl shadow-blue-500/20 transform group-hover:scale-105 transition-all duration-300">
+                        <Activity size={48} className="text-white" />
+                    </div>
+                </div>
+
+                {/* Title Text */}
+                <div>
+                    <h1 className="text-5xl md:text-7xl font-black tracking-tighter text-gray-900 dark:text-white mb-6 drop-shadow-sm">
+                        BET MIRROR <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-500">PRO</span>
+                    </h1>
+                    <p className="text-lg md:text-2xl text-gray-500 dark:text-gray-400 font-medium max-w-2xl mx-auto leading-relaxed">
+                        The institutional-grade prediction market terminal. <br/>
+                        <span className="text-gray-900 dark:text-gray-200">Non-Custodial. AI-Powered. 24/7 Cloud Execution.</span>
+                    </p>
+                </div>
+
+                {/* CTA */}
+                <div className="max-w-md mx-auto w-full pt-4">
+                    <button 
+                        onClick={onConnect} 
+                        className="group relative w-full py-5 bg-gray-900 dark:bg-white text-white dark:text-black font-bold text-lg rounded-2xl hover:shadow-2xl hover:shadow-blue-500/20 hover:-translate-y-1 transition-all duration-300 overflow-hidden"
+                    >
+                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-in-out"></div>
+                        <span className="relative flex items-center justify-center gap-3">
+                            <Wallet className="w-6 h-6" /> Connect Terminal
+                        </span>
+                    </button>
+                    <div className="flex justify-center gap-6 mt-4 text-[10px] uppercase tracking-widest font-bold text-gray-400">
+                        <span className="flex items-center gap-1"><Shield size={10}/> Audited</span>
+                        <span className="flex items-center gap-1"><Zap size={10}/> Gasless</span>
+                        <span className="flex items-center gap-1"><Globe size={10}/> Global</span>
+                    </div>
+                </div>
+
+                {/* Divider */}
+                <div className="w-full max-w-xs mx-auto h-px bg-gradient-to-r from-transparent via-gray-200 dark:via-gray-800 to-transparent my-12"></div>
+
+                {/* Supported Chains - Social Proof */}
+                <div className="space-y-6">
+                    <p className="text-sm font-semibold text-gray-500 dark:text-gray-500 uppercase tracking-widest">
+                        Built for Prediction Markets on
+                    </p>
+                    <div className="flex flex-wrap justify-center items-center gap-3 md:gap-4 px-4">
+                        {[
+                            { name: 'Polygon', color: 'bg-purple-500' },
+                            { name: 'Ethereum', color: 'bg-blue-400' },
+                            { name: 'Base', color: 'bg-blue-600' },
+                            { name: 'Arbitrum', color: 'bg-sky-500' },
+                            { name: 'BSC', color: 'bg-yellow-500' },
+                            { name: 'Solana', color: 'bg-green-500' }
+                        ].map((chain) => (
+                            <div key={chain.name} className="flex items-center gap-2 px-4 py-2 rounded-full bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 backdrop-blur-sm hover:bg-white dark:hover:bg-white/10 transition-colors cursor-default">
+                                <div className={`w-2 h-2 rounded-full ${chain.color} shadow-[0_0_8px_currentColor]`}></div>
+                                <span className="text-xs font-bold text-gray-700 dark:text-gray-300">{chain.name}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Markets Status Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto pt-8 text-left">
+                    
+                    {/* Active Market Card */}
+                    <div className="relative overflow-hidden p-6 rounded-3xl bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-white/10 shadow-xl hover:shadow-2xl hover:border-blue-500/30 transition-all duration-300 group">
+                        <div className="absolute top-0 right-0 p-4 opacity-5 transform group-hover:scale-110 transition-transform duration-500">
+                            <TrendingUp size={100} />
+                        </div>
+                        <div className="relative z-10">
+                            <div className="flex items-center gap-2 mb-4">
+                                <span className="relative flex h-2.5 w-2.5">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+                                </span>
+                                <span className="text-xs font-bold text-green-600 dark:text-green-400 uppercase tracking-wider">Live Integration</span>
+                            </div>
+                            <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Polymarket</h3>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-4">Current Copy Trading Volume Leader</p>
+                            <div className="inline-flex items-baseline gap-2 px-3 py-1 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-white/5">
+                                <Users size={14} className="text-gray-400"/>
+                                <span className="text-lg font-mono font-bold text-gray-900 dark:text-white">1.2M+</span>
+                                <span className="text-[10px] text-gray-500 uppercase font-bold">Users</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Coming Soon Card */}
+                    <div className="relative overflow-hidden p-6 rounded-3xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/5 opacity-90 hover:opacity-100 transition-opacity duration-300">
+                        <div className="relative z-10">
+                            <div className="flex items-center gap-2 mb-4">
+                                <span className="w-2.5 h-2.5 rounded-full bg-yellow-500"></span>
+                                <span className="text-xs font-bold text-yellow-600 dark:text-yellow-500 uppercase tracking-wider">Coming Soon</span>
+                            </div>
+                            <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">PredictBase</h3>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-4">Next-Gen Sports & Crypto Markets</p>
+                            <div className="inline-flex items-baseline gap-2 px-3 py-1 rounded-lg bg-white/50 dark:bg-white/5 border border-gray-200 dark:border-white/5">
+                                <Users size={14} className="text-gray-400"/>
+                                <span className="text-lg font-mono font-bold text-gray-900 dark:text-white">85k+</span>
+                                <span className="text-[10px] text-gray-500 uppercase font-bold">Waitlist</span>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                {/* Suggestion Input */}
+                <div className="pt-8 pb-12">
+                    <div className="inline-flex flex-col items-center gap-3 group cursor-pointer">
+                        <div className="p-3 rounded-full bg-gray-100 dark:bg-white/5 text-gray-400 group-hover:text-blue-500 group-hover:scale-110 transition-all duration-300">
+                            <MessageSquare size={20} />
+                        </div>
+                        <p className="text-sm font-medium text-gray-500 group-hover:text-gray-800 dark:group-hover:text-white transition-colors">
+                            What would you like to see? <span className="underline decoration-dotted underline-offset-4">Suggest here...</span>
+                        </p>
+                    </div>
+                </div>
+
             </div>
-            <div>
-                <h1 className="text-5xl font-bold tracking-tight mb-2">BET MIRROR <span className="text-blue-600 dark:text-blue-500">PRO</span></h1>
-                <p className="text-gray-500 text-lg">Non-Custodial. AI-Powered. 24/7 Execution.</p>
-            </div>
-            <button onClick={onConnect} className="w-full py-4 bg-black dark:bg-white text-white dark:text-black font-bold rounded-xl hover:opacity-80 transition-all flex items-center justify-center gap-3 shadow-xl text-lg">
-                <Wallet size={24}/> CONNECT WALLET
-            </button>
         </div>
     </div>
 );
