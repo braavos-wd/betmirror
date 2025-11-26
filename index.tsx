@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import axios from 'axios';
@@ -8,7 +7,7 @@ import {
   TrendingUp, History, Copy, ExternalLink, AlertTriangle, Smartphone, Coins, PlusCircle, X,
   CheckCircle2, ArrowDownCircle, ArrowUpCircle, Brain, AlertCircle, Trophy, Globe, Zap, LogOut,
   Info, HelpCircle, ChevronRight, Rocket, Gauge, MessageSquare, Star, ArrowRightLeft, LifeBuoy,
-  Sun, Moon, Loader2, Timer, Fuel, Check
+  Sun, Moon, Loader2, Timer, Fuel, Check, BarChart3
 } from 'lucide-react';
 import { web3Service, USDC_POLYGON, USDC_ABI } from './src/services/web3.service';
 import { lifiService, BridgeTransactionRecord } from './src/services/lifi-bridge.service';
@@ -629,7 +628,7 @@ const App = () => {
   // --- VIEW: LANDING ---
   if (!isConnected) {
       return (
-          <div className="fixed inset-0 z-[100] bg-white dark:bg-[#050505] overflow-y-auto overflow-x-hidden">
+          <div className="fixed inset-0 z-[100] bg-white dark:bg-[#050505] overflow-y-auto overflow-x-hidden font-sans">
               {/* Ambient Background */}
               <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-100/50 via-white to-white dark:from-blue-900/20 dark:via-[#050505] dark:to-[#050505] pointer-events-none"></div>
               <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-100 contrast-150 pointer-events-none mix-blend-overlay"></div>
@@ -679,30 +678,23 @@ const App = () => {
                       {/* Divider */}
                       <div className="w-full max-w-xs mx-auto h-px bg-gradient-to-r from-transparent via-gray-200 dark:via-gray-800 to-transparent my-12"></div>
 
-                      {/* Supported Chains - Social Proof */}
+                      {/* Supported Chains - Logos */}
                       <div className="space-y-6">
                           <p className="text-sm font-semibold text-gray-500 dark:text-gray-500 uppercase tracking-widest">
                               Built for Prediction Markets on
                           </p>
-                          <div className="flex flex-wrap justify-center items-center gap-3 md:gap-4 px-4">
-                              {[
-                                  { name: 'Polygon', color: 'bg-purple-500' },
-                                  { name: 'Ethereum', color: 'bg-blue-400' },
-                                  { name: 'Base', color: 'bg-blue-600' },
-                                  { name: 'Arbitrum', color: 'bg-sky-500' },
-                                  { name: 'BSC', color: 'bg-yellow-500' },
-                                  { name: 'Solana', color: 'bg-green-500' }
-                              ].map((chain) => (
-                                  <div key={chain.name} className="flex items-center gap-2 px-4 py-2 rounded-full bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 backdrop-blur-sm hover:bg-white dark:hover:bg-white/10 transition-colors cursor-default">
-                                      <div className={`w-2 h-2 rounded-full ${chain.color} shadow-[0_0_8px_currentColor]`}></div>
-                                      <span className="text-xs font-bold text-gray-700 dark:text-gray-300">{chain.name}</span>
-                                  </div>
-                              ))}
+                          <div className="flex flex-wrap justify-center items-center gap-6 px-4 opacity-80 hover:opacity-100 transition-opacity">
+                              <img src="https://cryptologos.cc/logos/polygon-matic-logo.svg?v=026" alt="Polygon" className="h-8 md:h-10 w-auto filter grayscale hover:grayscale-0 transition-all duration-300" />
+                              <img src="https://cryptologos.cc/logos/ethereum-eth-logo.svg?v=026" alt="Ethereum" className="h-8 md:h-10 w-auto filter grayscale hover:grayscale-0 transition-all duration-300" />
+                              <img src="https://raw.githubusercontent.com/base-org/brand-kit/master/logo/in-product/Base_Network_Logo.svg" alt="Base" className="h-8 md:h-10 w-auto filter grayscale hover:grayscale-0 transition-all duration-300" />
+                              <img src="https://cryptologos.cc/logos/arbitrum-arb-logo.svg?v=026" alt="Arbitrum" className="h-8 md:h-10 w-auto filter grayscale hover:grayscale-0 transition-all duration-300" />
+                              <img src="https://cryptologos.cc/logos/bnb-bnb-logo.svg?v=026" alt="BSC" className="h-8 md:h-10 w-auto filter grayscale hover:grayscale-0 transition-all duration-300" />
+                              <img src="https://cryptologos.cc/logos/solana-sol-logo.svg?v=026" alt="Solana" className="h-8 md:h-10 w-auto filter grayscale hover:grayscale-0 transition-all duration-300" />
                           </div>
                       </div>
 
                       {/* Markets Status Grid */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto pt-8 text-left">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto pt-12 text-left w-full">
                           
                           {/* Active Market Card */}
                           <div className="relative overflow-hidden p-6 rounded-3xl bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-white/10 shadow-xl hover:shadow-2xl hover:border-blue-500/30 transition-all duration-300 group">
@@ -717,7 +709,11 @@ const App = () => {
                                       </span>
                                       <span className="text-xs font-bold text-green-600 dark:text-green-400 uppercase tracking-wider">Live Integration</span>
                                   </div>
-                                  <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Polymarket</h3>
+                                  <div className="flex items-center gap-3 mb-4">
+                                      {/* Polymarket Logic: If no logo, use blue icon */}
+                                      <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-xl">P</div>
+                                      <h3 className="text-2xl font-bold text-gray-900 dark:text-white">Polymarket</h3>
+                                  </div>
                                   <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-4">Current Copy Trading Volume Leader</p>
                                   <div className="inline-flex items-baseline gap-2 px-3 py-1 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-white/5">
                                       <Users size={14} className="text-gray-400"/>
@@ -734,7 +730,11 @@ const App = () => {
                                       <span className="w-2.5 h-2.5 rounded-full bg-yellow-500"></span>
                                       <span className="text-xs font-bold text-yellow-600 dark:text-yellow-500 uppercase tracking-wider">Coming Soon</span>
                                   </div>
-                                  <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">PredictBase</h3>
+                                  <div className="flex items-center gap-3 mb-4">
+                                       {/* PredictBase Placeholder */}
+                                      <div className="w-10 h-10 rounded-full bg-gray-800 flex items-center justify-center text-white font-bold text-xl border border-white/10">pb</div>
+                                      <h3 className="text-2xl font-bold text-gray-900 dark:text-white">PredictBase</h3>
+                                  </div>
                                   <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-4">Next-Gen Sports & Crypto Markets</p>
                                   <div className="inline-flex items-baseline gap-2 px-3 py-1 rounded-lg bg-white/50 dark:bg-white/5 border border-gray-200 dark:border-white/5">
                                       <Users size={14} className="text-gray-400"/>
@@ -746,8 +746,27 @@ const App = () => {
 
                       </div>
 
+                      {/* Powered By Strip */}
+                      <div className="pt-16 pb-8 border-t border-gray-200 dark:border-white/5 w-full max-w-3xl mx-auto mt-12">
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-6">Infrastructure Partners</p>
+                          <div className="flex flex-wrap justify-center gap-8 md:gap-12 opacity-50 hover:opacity-80 transition-opacity">
+                              <div className="flex items-center gap-2">
+                                  <Zap size={18} className="text-gray-500"/> <span className="font-bold text-gray-500 text-sm">ZeroDev</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                  <Globe size={18} className="text-gray-500"/> <span className="font-bold text-gray-500 text-sm">LI.FI</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                  <Brain size={18} className="text-gray-500"/> <span className="font-bold text-gray-500 text-sm">Google Gemini</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                  <Server size={18} className="text-gray-500"/> <span className="font-bold text-gray-500 text-sm">MongoDB Atlas</span>
+                              </div>
+                          </div>
+                      </div>
+
                       {/* Suggestion Input */}
-                      <div className="pt-8 pb-12">
+                      <div className="pt-4 pb-12">
                           <div className="inline-flex flex-col items-center gap-3 group cursor-pointer">
                               <div className="p-3 rounded-full bg-gray-100 dark:bg-white/5 text-gray-400 group-hover:text-blue-500 group-hover:scale-110 transition-all duration-300">
                                   <MessageSquare size={20} />
@@ -1649,7 +1668,7 @@ const App = () => {
 };
 
 const Landing = ({ onConnect }: { onConnect: () => void }) => (
-    <div className="fixed inset-0 z-[100] bg-white dark:bg-[#050505] overflow-y-auto overflow-x-hidden">
+    <div className="fixed inset-0 z-[100] bg-white dark:bg-[#050505] overflow-y-auto overflow-x-hidden font-sans">
         {/* Ambient Background */}
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-100/50 via-white to-white dark:from-blue-900/20 dark:via-[#050505] dark:to-[#050505] pointer-events-none"></div>
         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-100 contrast-150 pointer-events-none mix-blend-overlay"></div>
@@ -1699,30 +1718,23 @@ const Landing = ({ onConnect }: { onConnect: () => void }) => (
                 {/* Divider */}
                 <div className="w-full max-w-xs mx-auto h-px bg-gradient-to-r from-transparent via-gray-200 dark:via-gray-800 to-transparent my-12"></div>
 
-                {/* Supported Chains - Social Proof */}
+                {/* Supported Chains - Logos */}
                 <div className="space-y-6">
                     <p className="text-sm font-semibold text-gray-500 dark:text-gray-500 uppercase tracking-widest">
                         Built for Prediction Markets on
                     </p>
-                    <div className="flex flex-wrap justify-center items-center gap-3 md:gap-4 px-4">
-                        {[
-                            { name: 'Polygon', color: 'bg-purple-500' },
-                            { name: 'Ethereum', color: 'bg-blue-400' },
-                            { name: 'Base', color: 'bg-blue-600' },
-                            { name: 'Arbitrum', color: 'bg-sky-500' },
-                            { name: 'BSC', color: 'bg-yellow-500' },
-                            { name: 'Solana', color: 'bg-green-500' }
-                        ].map((chain) => (
-                            <div key={chain.name} className="flex items-center gap-2 px-4 py-2 rounded-full bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 backdrop-blur-sm hover:bg-white dark:hover:bg-white/10 transition-colors cursor-default">
-                                <div className={`w-2 h-2 rounded-full ${chain.color} shadow-[0_0_8px_currentColor]`}></div>
-                                <span className="text-xs font-bold text-gray-700 dark:text-gray-300">{chain.name}</span>
-                            </div>
-                        ))}
+                    <div className="flex flex-wrap justify-center items-center gap-6 px-4 opacity-80 hover:opacity-100 transition-opacity">
+                        <img src="https://cryptologos.cc/logos/polygon-matic-logo.svg?v=026" alt="Polygon" className="h-8 md:h-10 w-auto filter grayscale hover:grayscale-0 transition-all duration-300" />
+                        <img src="https://cryptologos.cc/logos/ethereum-eth-logo.svg?v=026" alt="Ethereum" className="h-8 md:h-10 w-auto filter grayscale hover:grayscale-0 transition-all duration-300" />
+                        <img src="https://raw.githubusercontent.com/base-org/brand-kit/master/logo/in-product/Base_Network_Logo.svg" alt="Base" className="h-8 md:h-10 w-auto filter grayscale hover:grayscale-0 transition-all duration-300" />
+                        <img src="https://cryptologos.cc/logos/arbitrum-arb-logo.svg?v=026" alt="Arbitrum" className="h-8 md:h-10 w-auto filter grayscale hover:grayscale-0 transition-all duration-300" />
+                        <img src="https://cryptologos.cc/logos/bnb-bnb-logo.svg?v=026" alt="BSC" className="h-8 md:h-10 w-auto filter grayscale hover:grayscale-0 transition-all duration-300" />
+                        <img src="https://cryptologos.cc/logos/solana-sol-logo.svg?v=026" alt="Solana" className="h-8 md:h-10 w-auto filter grayscale hover:grayscale-0 transition-all duration-300" />
                     </div>
                 </div>
 
                 {/* Markets Status Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto pt-8 text-left">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto pt-12 text-left w-full">
                     
                     {/* Active Market Card */}
                     <div className="relative overflow-hidden p-6 rounded-3xl bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-white/10 shadow-xl hover:shadow-2xl hover:border-blue-500/30 transition-all duration-300 group">
@@ -1737,7 +1749,11 @@ const Landing = ({ onConnect }: { onConnect: () => void }) => (
                                 </span>
                                 <span className="text-xs font-bold text-green-600 dark:text-green-400 uppercase tracking-wider">Live Integration</span>
                             </div>
-                            <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Polymarket</h3>
+                            <div className="flex items-center gap-3 mb-4">
+                                {/* Polymarket Logic: If no logo, use blue icon */}
+                                <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-xl">P</div>
+                                <h3 className="text-2xl font-bold text-gray-900 dark:text-white">Polymarket</h3>
+                            </div>
                             <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-4">Current Copy Trading Volume Leader</p>
                             <div className="inline-flex items-baseline gap-2 px-3 py-1 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-white/5">
                                 <Users size={14} className="text-gray-400"/>
@@ -1754,7 +1770,11 @@ const Landing = ({ onConnect }: { onConnect: () => void }) => (
                                 <span className="w-2.5 h-2.5 rounded-full bg-yellow-500"></span>
                                 <span className="text-xs font-bold text-yellow-600 dark:text-yellow-500 uppercase tracking-wider">Coming Soon</span>
                             </div>
-                            <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">PredictBase</h3>
+                            <div className="flex items-center gap-3 mb-4">
+                                 {/* PredictBase Placeholder */}
+                                <div className="w-10 h-10 rounded-full bg-gray-800 flex items-center justify-center text-white font-bold text-xl border border-white/10">pb</div>
+                                <h3 className="text-2xl font-bold text-gray-900 dark:text-white">PredictBase</h3>
+                            </div>
                             <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-4">Next-Gen Sports & Crypto Markets</p>
                             <div className="inline-flex items-baseline gap-2 px-3 py-1 rounded-lg bg-white/50 dark:bg-white/5 border border-gray-200 dark:border-white/5">
                                 <Users size={14} className="text-gray-400"/>
@@ -1766,8 +1786,27 @@ const Landing = ({ onConnect }: { onConnect: () => void }) => (
 
                 </div>
 
+                {/* Powered By Strip */}
+                <div className="pt-16 pb-8 border-t border-gray-200 dark:border-white/5 w-full max-w-3xl mx-auto mt-12">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-6">Infrastructure Partners</p>
+                    <div className="flex flex-wrap justify-center gap-8 md:gap-12 opacity-50 hover:opacity-80 transition-opacity">
+                        <div className="flex items-center gap-2">
+                            <Zap size={18} className="text-gray-500"/> <span className="font-bold text-gray-500 text-sm">ZeroDev</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Globe size={18} className="text-gray-500"/> <span className="font-bold text-gray-500 text-sm">LI.FI</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Brain size={18} className="text-gray-500"/> <span className="font-bold text-gray-500 text-sm">Google Gemini</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Server size={18} className="text-gray-500"/> <span className="font-bold text-gray-500 text-sm">MongoDB Atlas</span>
+                        </div>
+                    </div>
+                </div>
+
                 {/* Suggestion Input */}
-                <div className="pt-8 pb-12">
+                <div className="pt-4 pb-12">
                     <div className="inline-flex flex-col items-center gap-3 group cursor-pointer">
                         <div className="p-3 rounded-full bg-gray-100 dark:bg-white/5 text-gray-400 group-hover:text-blue-500 group-hover:scale-110 transition-all duration-300">
                             <MessageSquare size={20} />
