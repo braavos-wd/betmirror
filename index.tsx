@@ -1554,7 +1554,7 @@ const Landing = ({ onConnect, theme, toggleTheme }: { onConnect: () => void, the
             <div className="text-center flex flex-col items-center">
                 
                 {/* Logo Icon with Shadow Glow */}
-                <div className="mb-8 relative">
+                <div className="mb-8 relative mt-7">
                     <div className="absolute inset-0 bg-blue-500 blur-2xl opacity-20 rounded-full"></div>
                     <div className="relative w-20 h-20 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center shadow-xl shadow-blue-500/20">
                         <Activity size={40} className="text-white" />
@@ -1592,25 +1592,25 @@ const Landing = ({ onConnect, theme, toggleTheme }: { onConnect: () => void, the
                 {/* Trust Badges */}
                 <div className="mt-12 flex gap-8 opacity-40 animate-in fade-in duration-1000 delay-500">
                     <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-gray-500">
-                        <Shield size={12}/> Audited
+                        <Shield size={12}/> Secure-AA
                     </div>
                     <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-gray-500">
-                        <ZapIcon size={12}/> Gasless
+                        <ZapIcon size={12}/> Autonomous
                     </div>
                     <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-gray-500">
-                        <Globe size={12}/> Global
+                        <Globe size={12}/> Cross-Chain
                     </div>
                 </div>
 
                 {/* Footer Logos - Subtle */}
                 <div className="mt-32 flex flex-col items-center gap-6 animate-in fade-in duration-1000 delay-700">
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.3em] opacity-50">
-                        POWERED BY
+                        SUPPORTED CHAINS
                     </p>
                     <div className="flex gap-12 opacity-30 grayscale hover:grayscale-0 hover:opacity-100 transition-all duration-500">
                         <img src="https://cryptologos.cc/logos/polygon-matic-logo.svg?v=026" alt="Polygon" className="h-5 w-auto" />
                         <img src="https://cryptologos.cc/logos/ethereum-eth-logo.svg?v=026" alt="Ethereum" className="h-5 w-auto" />
-                        <img src="https://cryptologos.cc/logos/base-base-logo.svg?v=026" alt="Base" className="h-5 w-auto" />
+                        <img src="https://cdn.brandfetch.io/id6XsSOVVS/theme/dark/logo.svg?c=1bxid64Mup7aczewSAYMX&t=1757929765938" alt="Base" className="h-5 w-auto" />
                         <img src="https://cryptologos.cc/logos/arbitrum-arb-logo.svg?v=026" alt="Arbitrum" className="h-5 w-auto" />
                         <img src="https://cryptologos.cc/logos/solana-sol-logo.svg?v=026" alt="Solana" className="h-4 w-auto mt-0.5" />
                     </div>
