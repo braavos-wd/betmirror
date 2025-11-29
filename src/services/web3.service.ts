@@ -1,4 +1,3 @@
-
 import { BrowserProvider, Contract, parseUnits, Eip1193Provider } from 'ethers';
 import { createWalletClient, custom, WalletClient } from 'viem';
 import { polygon } from 'viem/chains';
@@ -126,9 +125,18 @@ export class Web3Service {
       const decimals = await usdc.decimals();
       const amountUnits = parseUnits(amount, decimals);
       
-      const tx = await usdc.transfer(toAddress, amountUnits);
-      await tx.wait();
-      return tx.hash;
+      try {
+          const tx = await usdc.transfer(toAddress, amountUnits);
+          await tx.wait();
+          return tx.hash;
+      } catch (e: any) {
+          console.error(e);
+          // Catch common RPC errors
+          if (e.code === 'CALL_EXCEPTION' || e.message?.includes('estimateGas')) {
+              throw new Error("Transaction failed during gas estimation. You likely have insufficient MATIC for gas or insufficient USDC funds on Polygon.");
+          }
+          throw e;
+      }
   }
 
   private getChainConfig(chainId: number) {

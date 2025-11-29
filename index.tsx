@@ -414,8 +414,6 @@ const App = () => {
      setIsActivating(true);
      try {
          // CRITICAL FIX: Ensure chain is Polygon before interaction
-         // We explicitly pass chainId 137 to force the switch logic inside getViemWalletClient
-         // The service now polls to ensure the switch actually happened
          const walletClient = await web3Service.getViemWalletClient(137);
          
          // 1. Create Session Key Client Side
@@ -467,13 +465,32 @@ const App = () => {
 
   const handleDeposit = async () => {
       if (!proxyAddress) return;
+      
+      // 1. Pre-Check Balances before trying
+      const availableUsdc = parseFloat(mainWalletBal.usdc);
+      const requestedAmount = parseFloat(depositAmount);
+      
+      if (availableUsdc < requestedAmount) {
+          const goToBridge = confirm(`Insufficient USDC on Polygon.\nAvailable: $${availableUsdc}\nRequested: $${requestedAmount}\n\nDo you want to BRIDGE funds from another chain (Solana, Base, Eth)?`);
+          if (goToBridge) {
+              setActiveTab('bridge');
+              setIsDepositing(false);
+          }
+          return;
+      }
+
       setIsDepositing(true);
       try {
           await web3Service.deposit(proxyAddress, depositAmount);
           alert("Deposit Transaction Sent! Funds will arrive shortly.");
           setIsDepositing(false);
       } catch (e: any) {
-          alert(`Deposit Failed: ${e.message}`);
+          // Handle explicit errors
+          if (e.message.includes("funds")) {
+              alert("Insufficient USDC or MATIC for gas on Polygon.");
+          } else {
+              alert(`Deposit Failed: ${e.message}`);
+          }
           setIsDepositing(false);
       }
   };
