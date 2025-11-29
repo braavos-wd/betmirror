@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import axios from 'axios';
@@ -10,7 +9,7 @@ import {
   CheckCircle2, ArrowDownCircle, ArrowUpCircle, Brain, AlertCircle, Trophy, Globe, Zap, LogOut,
   Info, HelpCircle, ChevronRight, Rocket, Gauge, MessageSquare, Star, ArrowRightLeft, LifeBuoy,
   Sun, Moon, Loader2, Timer, Fuel, Check, BarChart3, ChevronDown, MousePointerClick,
-  Zap as ZapIcon, FileText, Twitter, Github, LockKeyhole, BadgeCheck
+  Zap as ZapIcon, FileText, Twitter, Github, LockKeyhole, BadgeCheck, Search
 } from 'lucide-react';
 import { web3Service, USDC_POLYGON, USDC_ABI } from './src/services/web3.service';
 import { lifiService, BridgeTransactionRecord } from './src/services/lifi-bridge.service';
@@ -208,42 +207,68 @@ const ActivationView = ({
     const [recoveryMode, setRecoveryMode] = useState(false);
     const [computedAddress, setComputedAddress] = useState<string>('');
     const [existingBalance, setExistingBalance] = useState<string>('0.00');
-    const [checking, setChecking] = useState(true);
+    const [checking, setChecking] = useState(false);
+    const [scanError, setScanError] = useState<string>('');
     const [showSafetyGuide, setShowSafetyGuide] = useState(false);
 
-    // Check if an account already exists on-chain for this user
-    useEffect(() => {
-        const checkExisting = async () => {
-            if (!userAddress || chainId !== 137) {
-                setChecking(false);
-                return;
+    // Function to perform the scan
+    const scanBlockchain = async () => {
+        setChecking(true);
+        setScanError('');
+        setRecoveryMode(false);
+        setComputedAddress('');
+
+        try {
+            // 1. Force Check Chain
+            if (chainId !== 137) {
+                // If wrong chain, we can't reliably scan yet.
+                // We'll try to get the client anyway, which might trigger switch
+                try {
+                    await web3Service.getViemWalletClient(137);
+                } catch (e) {
+                    setScanError("Please switch your wallet to Polygon Mainnet to scan.");
+                    setChecking(false);
+                    return;
+                }
             }
+
+            // 2. Compute Deterministic Address
+            const walletClient = await web3Service.getViemWalletClient(137);
+            const address = await zeroDevService.computeMasterAccountAddress(walletClient);
             
-            try {
-                // 1. Compute deterministic address
-                const walletClient = await web3Service.getViemWalletClient(137);
-                const address = await zeroDevService.computeMasterAccountAddress(walletClient);
-                
-                if (address) {
-                    setComputedAddress(address);
-                    // 2. Check balance
+            if (address) {
+                setComputedAddress(address);
+                // 3. Check balance
+                try {
                     const polyProvider = new JsonRpcProvider('https://polygon-rpc.com');
                     const usdcContract = new Contract(USDC_POLYGON, USDC_ABI, polyProvider);
                     const bal = await usdcContract.balanceOf(address);
                     const formatted = formatUnits(bal, 6);
-                    
-                    if (parseFloat(formatted) > 0) {
-                        setExistingBalance(formatted);
-                        setRecoveryMode(true);
-                    }
+                    setExistingBalance(formatted);
+                } catch (e) {
+                    console.warn("Failed to check balance:", e);
+                    setExistingBalance('0.00');
                 }
-            } catch (e) {
-                console.error("Failed to check existing account", e);
-            } finally {
-                setChecking(false);
+                
+                // If we found an address, we assume recovery mode is valid 
+                // (It's always valid because the address is deterministic)
+                setRecoveryMode(true);
+            } else {
+                setScanError("Could not calculate Smart Account address. RPC Error?");
             }
-        };
-        checkExisting();
+        } catch (e: any) {
+            console.error("Scan failed", e);
+            setScanError(e.message || "Failed to scan. Check console.");
+        } finally {
+            setChecking(false);
+        }
+    };
+
+    // Auto-scan on mount if on Polygon
+    useEffect(() => {
+        if (userAddress && chainId === 137) {
+            scanBlockchain();
+        }
     }, [userAddress, chainId]);
 
     return (
@@ -268,63 +293,81 @@ const ActivationView = ({
                             {recoveryMode ? 'Restore Smart Session' : 'Activate Smart Bot'}
                         </h2>
                         <p className="text-gray-500">
-                            {recoveryMode ? 'Existing account detected. Re-establishing connection.' : 'Set up your non-custodial trading account.'}
+                            {recoveryMode ? 'Found your existing account.' : 'Set up your non-custodial trading account.'}
                         </p>
                     </div>
                 </div>
 
+                {/* --- Status / Error / Info Area --- */}
                 {checking && (
-                    <div className="flex items-center gap-2 text-xs text-gray-500 animate-pulse">
-                        <Loader2 size={12} className="animate-spin"/> Checking chain for existing history...
+                    <div className="flex items-center gap-2 text-xs text-blue-500 animate-pulse bg-blue-50 dark:bg-blue-900/10 p-3 rounded">
+                        <Loader2 size={12} className="animate-spin"/> Scanning Polygon Blockchain for your account...
                     </div>
                 )}
 
+                {scanError && !checking && (
+                    <div className="p-3 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-500/30 flex items-center justify-between">
+                        <div className="flex gap-2 items-center text-red-600 dark:text-red-400 text-xs">
+                            <AlertCircle size={14}/> {scanError}
+                        </div>
+                        <button onClick={scanBlockchain} className="text-xs font-bold underline hover:text-red-800 dark:hover:text-red-300">Retry</button>
+                    </div>
+                )}
+
+                {/* --- Found Account Display --- */}
                 {recoveryMode && (
-                    <div className="p-4 bg-green-50 dark:bg-green-900/10 rounded-lg border border-green-200 dark:border-green-500/20">
+                    <div className="p-4 bg-green-50 dark:bg-green-900/10 rounded-lg border border-green-200 dark:border-green-500/20 animate-in fade-in zoom-in duration-300">
                         <div className="flex justify-between items-center mb-2">
-                            <span className="text-xs font-bold text-green-800 dark:text-green-400 uppercase tracking-wider">Account Found</span>
-                            <span className="bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200 text-[10px] px-2 py-0.5 rounded font-mono font-bold">ACTIVE</span>
+                            <span className="text-xs font-bold text-green-800 dark:text-green-400 uppercase tracking-wider flex items-center gap-1"><CheckCircle2 size={12}/> Account Found</span>
+                            <span className="bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200 text-[10px] px-2 py-0.5 rounded font-mono font-bold">READY</span>
                         </div>
-                        <div className="flex justify-between text-sm">
-                            <span className="text-gray-600 dark:text-gray-300 font-mono text-xs">{computedAddress}</span>
-                            <span className="font-bold text-gray-900 dark:text-white">${existingBalance} USDC</span>
+                        <div className="flex justify-between text-sm items-center">
+                            <span className="text-gray-600 dark:text-gray-300 font-mono text-xs bg-white dark:bg-black/20 px-2 py-1 rounded select-all">{computedAddress}</span>
+                            <span className="font-bold text-gray-900 dark:text-white flex items-center gap-1">
+                                {parseFloat(existingBalance) > 0 ? <span className="w-2 h-2 rounded-full bg-green-500"></span> : <span className="w-2 h-2 rounded-full bg-gray-400"></span>}
+                                ${existingBalance} USDC
+                            </span>
                         </div>
                     </div>
                 )}
 
-                <div className="space-y-4">
-                    <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/5">
-                        <CheckCircle2 size={16} className="text-green-500 mt-1" />
-                        <div>
-                            <span className="text-sm font-bold text-gray-900 dark:text-white">Non-Custodial Security</span>
-                            <p className="text-xs text-gray-500">You hold the admin keys. We only get trade permissions.</p>
+                {/* --- Network Warning --- */}
+                {chainId !== 137 && !checking && (
+                    <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-700/50 flex flex-col gap-2">
+                        <div className="flex items-center gap-2">
+                            <AlertTriangle size={16} className="text-yellow-600 dark:text-yellow-500"/>
+                            <p className="text-xs text-yellow-700 dark:text-yellow-400 font-bold">Wrong Network Detected (Chain {chainId})</p>
                         </div>
-                    </div>
-                    <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/5">
-                        <CheckCircle2 size={16} className="text-green-500 mt-1" />
-                        <div>
-                            <span className="text-sm font-bold text-gray-900 dark:text-white">Gas Abstraction</span>
-                            <p className="text-xs text-gray-500">ZeroDev Smart Accounts handle gas optimization.</p>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Network Warning for Activation */}
-                {chainId !== 137 && (
-                    <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-700/50 flex gap-2 items-center">
-                        <AlertTriangle size={16} className="text-yellow-600 dark:text-yellow-500"/>
-                        <p className="text-xs text-yellow-700 dark:text-yellow-400 font-bold">Wrong Network: We will attempt to switch you to Polygon automatically.</p>
+                        <p className="text-[10px] text-yellow-700 dark:text-yellow-500/80 ml-6">
+                            We need to scan Polygon to find your Smart Account.
+                        </p>
+                        <button 
+                            onClick={() => web3Service.switchToChain(137)}
+                            className="ml-6 w-fit px-3 py-1 bg-yellow-200 dark:bg-yellow-800 hover:bg-yellow-300 dark:hover:bg-yellow-700 text-yellow-900 dark:text-yellow-100 rounded text-xs font-bold transition-colors"
+                        >
+                            Switch to Polygon
+                        </button>
                     </div>
                 )}
 
+                {/* --- Manual Scan Button (If nothing found yet and no error) --- */}
+                {!recoveryMode && !checking && !scanError && chainId === 137 && (
+                    <div className="flex justify-center">
+                        <button onClick={scanBlockchain} className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1">
+                            <Search size={12}/> Scan for existing account
+                        </button>
+                    </div>
+                )}
+
+                {/* --- Main Action Button --- */}
                 <button 
                     onClick={handleActivate}
-                    disabled={isActivating || checking}
+                    disabled={isActivating || checking || (chainId !== 137 && !recoveryMode)}
                     className={`w-full py-3 px-2 sm:py-4 text-white font-bold rounded-xl hover:opacity-90 transition-all flex items-center justify-center gap-2 sm:gap-3 shadow-lg text-sm sm:text-base ${
                         recoveryMode 
                         ? 'bg-gradient-to-r from-green-600 to-green-500 shadow-green-500/20' 
                         : 'bg-gradient-to-r from-blue-600 to-blue-500 shadow-blue-500/20'
-                    }`}
+                    } disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
                     {isActivating ? (
                         <RefreshCw className="animate-spin flex-shrink-0" size={18} />
@@ -332,15 +375,15 @@ const ActivationView = ({
                         recoveryMode ? <RefreshCw className="flex-shrink-0" size={18}/> : <Rocket className="flex-shrink-0" size={18} />
                     )}
                     <span className="whitespace-nowrap overflow-hidden text-ellipsis">
-                        {isActivating ? 'PROCESSING...' : (recoveryMode ? 'RESTORE SESSION' : 'CREATE SMART ACCOUNT')}
+                        {isActivating ? 'PROCESSING...' : (recoveryMode ? 'RESTORE SESSION & DATA' : 'CREATE SMART ACCOUNT')}
                     </span>
                 </button>
                 
                 <div className="flex flex-col items-center gap-2">
                     <p className="text-center text-[10px] text-gray-500">
                         {recoveryMode 
-                            ? "Restoring access generates a new session key for your existing on-chain wallet." 
-                            : "By clicking Create, you sign a Session Key transaction. You must be on Polygon Mainnet."}
+                            ? "Re-syncs your database session with your existing on-chain Smart Account." 
+                            : "Deploys a deterministic ZeroDev Kernel v3.1 account linked to your wallet."}
                     </p>
                     <button 
                         onClick={() => setShowSafetyGuide(true)} 
@@ -364,6 +407,23 @@ const ActivationView = ({
                             <div>
                                 <h3 className="text-xl font-bold text-gray-900 dark:text-white">Funds Safety & Recovery Guide</h3>
                                 <p className="text-xs text-gray-500">How Account Abstraction protects your assets.</p>
+                            </div>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/5">
+                                <CheckCircle2 size={16} className="text-green-500 mt-1" />
+                                <div>
+                                    <span className="text-sm font-bold text-gray-900 dark:text-white">Non-Custodial Security</span>
+                                    <p className="text-xs text-gray-500">You hold the admin keys. We only get trade permissions.</p>
+                                </div>
+                            </div>
+                            <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/5">
+                                <CheckCircle2 size={16} className="text-green-500 mt-1" />
+                                <div>
+                                    <span className="text-sm font-bold text-gray-900 dark:text-white">Gas Abstraction</span>
+                                    <p className="text-xs text-gray-500">ZeroDev Smart Accounts handle gas optimization.</p>
+                                </div>
                             </div>
                         </div>
 
