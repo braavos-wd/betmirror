@@ -110,8 +110,7 @@ export class BotEngine {
   private client?: ClobClient & { wallet: any };
   private watchdogTimer?: NodeJS.Timeout;
   
-  // Use in-memory logs as a buffer
-  private logs: any[] = [];
+  // Use in-memory logs as a buffer (optional backup)
   private activePositions: ActivePosition[] = [];
   
   private stats: UserStats = {
@@ -142,17 +141,6 @@ export class BotEngine {
 
   // Async log writing to DB
   private async addLog(type: 'info' | 'warn' | 'error' | 'success', message: string) {
-    // 1. Write to memory (for immediate polling before DB confirms)
-    const log = {
-      id: Math.random().toString(36) + Date.now(),
-      time: new Date().toLocaleTimeString(),
-      type,
-      message
-    };
-    this.logs.unshift(log);
-    if (this.logs.length > 50) this.logs.pop();
-
-    // 2. Write to MongoDB (Persistent Storage)
     try {
         await BotLog.create({
             userId: this.config.userId,

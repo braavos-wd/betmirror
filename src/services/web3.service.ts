@@ -25,31 +25,63 @@ export class Web3Service {
     this.signer = await this.provider.getSigner();
     
     // Auto-switch to Polygon on connect for best UX
-    await this.switchToChain(137);
+    try {
+        await this.switchToChain(137);
+    } catch (e) {
+        console.warn("Auto-switch failed on connect (non-critical):", e);
+    }
 
     return await this.signer.getAddress();
   }
 
   /**
    * Returns a Viem Wallet Client (Required for ZeroDev / AA)
-   * Automatically enforces the correct chain context.
+   * Automatically enforces the correct chain context with robust polling.
    */
   async getViemWalletClient(targetChainId: number = 137): Promise<WalletClient> {
       if (!(window as any).ethereum) throw new Error("No Wallet");
 
-      // CRITICAL: Force switch before creating client to prevent "Provider not connected to requested chain" error
-      await this.switchToChain(targetChainId);
+      const provider = (window as any).ethereum;
+
+      // 1. Strict Chain Check with Retry
+      await this.ensureChain(provider, targetChainId);
       
-      const [account] = await (window as any).ethereum.request({ method: 'eth_requestAccounts' });
+      const [account] = await provider.request({ method: 'eth_requestAccounts' });
           
       // Always recreate the client to ensure it binds to the freshly switched provider context
       this.viemClient = createWalletClient({
         account,
         chain: polygon, // ZeroDev expects Polygon
-        transport: custom((window as any).ethereum)
+        transport: custom(provider)
       });
       
       return this.viemClient;
+  }
+
+  /**
+   * Polling mechanism to ensure provider is actually on the target chain
+   * preventing 'Provider is not connected to requested chain' errors.
+   */
+  private async ensureChain(provider: any, targetChainId: number): Promise<void> {
+      const hexTarget = "0x" + targetChainId.toString(16);
+      
+      // Try up to 5 times to verify chain
+      for (let i = 0; i < 5; i++) {
+          const currentChainIdHex = await provider.request({ method: 'eth_chainId' });
+          if (parseInt(currentChainIdHex, 16) === targetChainId) {
+              return; // We are good
+          }
+
+          if (i === 0) {
+              // Only trigger switch on first attempt
+              await this.switchToChain(targetChainId);
+          }
+          
+          // Wait 500ms before checking again
+          await new Promise(r => setTimeout(r, 500));
+      }
+      
+      throw new Error(`Failed to switch network. Please manually switch to Polygon (Chain ID ${targetChainId}) in your wallet.`);
   }
 
   async switchToChain(chainId: number) {
@@ -76,6 +108,7 @@ export class Web3Service {
                  throw new Error(`Chain ID ${chainId} configuration not found.`);
              }
           } else {
+              console.error("Switch Error:", switchError);
               throw switchError;
           }
       }

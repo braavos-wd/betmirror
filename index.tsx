@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import axios from 'axios';
@@ -9,7 +8,8 @@ import {
   TrendingUp, History, Copy, ExternalLink, AlertTriangle, Smartphone, Coins, PlusCircle, X,
   CheckCircle2, ArrowDownCircle, ArrowUpCircle, Brain, AlertCircle, Trophy, Globe, Zap, LogOut,
   Info, HelpCircle, ChevronRight, Rocket, Gauge, MessageSquare, Star, ArrowRightLeft, LifeBuoy,
-  Sun, Moon, Loader2, Timer, Fuel, Check, BarChart3, ChevronDown, MousePointerClick
+  Sun, Moon, Loader2, Timer, Fuel, Check, BarChart3, ChevronDown, MousePointerClick,
+  Zap as ZapIcon, FileText, Twitter, Github
 } from 'lucide-react';
 import { web3Service, USDC_POLYGON, USDC_ABI } from './src/services/web3.service';
 import { lifiService, BridgeTransactionRecord } from './src/services/lifi-bridge.service';
@@ -415,6 +415,7 @@ const App = () => {
      try {
          // CRITICAL FIX: Ensure chain is Polygon before interaction
          // We explicitly pass chainId 137 to force the switch logic inside getViemWalletClient
+         // The service now polls to ensure the switch actually happened
          const walletClient = await web3Service.getViemWalletClient(137);
          
          // 1. Create Session Key Client Side
@@ -434,9 +435,9 @@ const App = () => {
 
      } catch (e: any) {
          console.error(e);
-         // Nicer error handling for chain mismatch
-         if(e.message?.includes('Chain') || e.message?.includes('Provider')) {
-             alert("Activation Failed: Please switch your wallet network to Polygon (Matic) Mainnet.");
+         // Nicer error handling for chain mismatch or user rejection
+         if(e.message?.includes('Chain') || e.message?.includes('Provider') || e.message?.includes('network')) {
+             alert("⚠️ Network Mismatch\n\nPlease open your wallet and manually switch the network to Polygon Mainnet (Chain ID 137) before trying again.");
          } else {
              alert("Activation failed: " + e.message);
          }
@@ -690,6 +691,14 @@ const App = () => {
                           </div>
                       </div>
                   </div>
+
+                  {/* Network Warning for Activation */}
+                  {chainId !== 137 && (
+                      <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-700/50 flex gap-2 items-center">
+                          <AlertTriangle size={16} className="text-yellow-600 dark:text-yellow-500"/>
+                          <p className="text-xs text-yellow-700 dark:text-yellow-400 font-bold">Wrong Network: We will attempt to switch you to Polygon automatically.</p>
+                      </div>
+                  )}
 
                   <button 
                       onClick={handleActivateSmartAccount}
@@ -1767,7 +1776,7 @@ const Landing = ({ onConnect, theme, toggleTheme }: { onConnect: () => void, the
                     </div>
 
                     <div className="text-[10px] text-gray-400 font-medium">
-                        © 2024 PolyCafe Labs. All rights reserved.
+                        © 2025 PolyCafe Labs. All rights reserved.
                     </div>
                 </div>
             </footer>

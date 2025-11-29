@@ -34,28 +34,27 @@ app.use(express.static(distPath) as any);
 
 // --- HELPER: Start Bot Instance ---
 async function startUserBot(userId: string, config: BotConfig) {
-    if (ACTIVE_BOTS.has(userId)) {
-        ACTIVE_BOTS.get(userId)?.stop();
+    // Ensure lowercase ID
+    const normId = userId.toLowerCase();
+    
+    if (ACTIVE_BOTS.has(normId)) {
+        ACTIVE_BOTS.get(normId)?.stop();
     }
 
-    // Determine start cursor to prevent gaps or replays. 
-    // If config has explicit startCursor (from manual start), use it.
-    // Otherwise, it defaults to NOW in the engine, but we want it to handle restarts gracefully.
     const startCursor = config.startCursor || Math.floor(Date.now() / 1000);
-    
-    const engineConfig = { ...config, startCursor };
+    const engineConfig = { ...config, userId: normId, startCursor };
 
     const engine = new BotEngine(engineConfig, dbRegistryService, {
         onPositionsUpdate: async (positions) => {
-            await User.updateOne({ address: userId }, { activePositions: positions });
+            await User.updateOne({ address: normId }, { activePositions: positions });
         },
         onCashout: async (record) => {
-            await User.updateOne({ address: userId }, { $push: { cashoutHistory: record } });
+            await User.updateOne({ address: normId }, { $push: { cashoutHistory: record } });
         },
         onTradeComplete: async (trade) => {
             // Save Trade to separate collection
             await Trade.create({
-                userId: userId,
+                userId: normId,
                 marketId: trade.marketId,
                 outcome: trade.outcome,
                 side: trade.side,
@@ -70,7 +69,7 @@ async function startUserBot(userId: string, config: BotConfig) {
             });
         },
         onStatsUpdate: async (stats) => {
-            await User.updateOne({ address: userId }, { stats });
+            await User.updateOne({ address: normId }, { stats });
         },
         onFeePaid: async (event) => {
              // Find the lister and increment their stats
@@ -83,7 +82,7 @@ async function startUserBot(userId: string, config: BotConfig) {
         }
     });
 
-    ACTIVE_BOTS.set(userId, engine);
+    ACTIVE_BOTS.set(normId, engine);
     await engine.start();
 }
 
@@ -103,9 +102,10 @@ app.get('/health', (req, res) => {
 app.post('/api/wallet/status', async (req: any, res: any) => {
   const { userId } = req.body; 
   if (!userId) { res.status(400).json({ error: 'User Address required' }); return; }
+  const normId = userId.toLowerCase();
 
   try {
-      const user = await User.findOne({ address: userId });
+      const user = await User.findOne({ address: normId });
       
       if (!user || !user.proxyWallet) {
         res.json({ status: 'NEEDS_ACTIVATION' });
@@ -129,22 +129,23 @@ app.post('/api/wallet/activate', async (req: any, res: any) => {
     if (!userId || !serializedSessionKey || !smartAccountAddress) { 
         res.status(400).json({ error: 'Missing activation parameters' }); return; 
     }
+    const normId = userId.toLowerCase();
 
     const walletConfig: ProxyWalletConfig = {
         type: 'SMART_ACCOUNT',
         address: smartAccountAddress,
         serializedSessionKey: serializedSessionKey,
-        ownerAddress: userId,
+        ownerAddress: normId,
         createdAt: new Date().toISOString()
     };
 
     try {
         await User.findOneAndUpdate(
-            { address: userId },
+            { address: normId },
             { proxyWallet: walletConfig },
             { upsert: true, new: true }
         );
-        console.log(`[ACTIVATION] Smart Account Activated: ${smartAccountAddress} (Owner: ${userId})`);
+        console.log(`[ACTIVATION] Smart Account Activated: ${smartAccountAddress} (Owner: ${normId})`);
         res.json({ success: true, address: smartAccountAddress });
     } catch (e) {
         res.status(500).json({ error: 'Failed to activate' });
@@ -161,20 +162,18 @@ app.get('/api/stats/global', async (req: any, res: any) => {
             { $group: { 
                 _id: null, 
                 totalVolume: { $sum: "$stats.totalVolume" },
-                totalRevenue: { $sum: "$stats.totalFeesPaid" } // Platform revenue approximation
+                totalRevenue: { $sum: "$stats.totalFeesPaid" }
             }}
         ]);
         
         const totalVolume = agg[0]?.totalVolume || 0;
         const totalRevenue = agg[0]?.totalRevenue || 0;
 
-        // Add Registry generated stats
         const registryAgg = await Registry.aggregate([
              { $group: { _id: null, totalGenerated: { $sum: "$copyProfitGenerated" } } }
         ]);
         const registryRevenue = (registryAgg[0]?.totalGenerated || 0) * 0.01;
         
-        // Get actual bridged volume from DB
         const bridgeAgg = await BridgeTransaction.aggregate([
              { $group: { _id: null, totalBridged: { $sum: { $toDouble: "$amountIn" } } } }
         ]);
@@ -197,7 +196,7 @@ app.get('/api/stats/global', async (req: any, res: any) => {
 app.post('/api/feedback', async (req: any, res: any) => {
     const { userId, rating, comment } = req.body;
     try {
-        await Feedback.create({ userId, rating, comment });
+        await Feedback.create({ userId: userId.toLowerCase(), rating, comment });
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ error: 'Failed' });
@@ -208,15 +207,18 @@ app.post('/api/feedback', async (req: any, res: any) => {
 app.post('/api/bot/start', async (req: any, res: any) => {
   const { userId, userAddresses, rpcUrl, geminiApiKey, multiplier, riskProfile, autoTp, notifications, autoCashout } = req.body;
   
+  if (!userId) { res.status(400).json({ error: 'Missing userId' }); return; }
+  const normId = userId.toLowerCase();
+
   try {
-      const user = await User.findOne({ address: userId });
+      const user = await User.findOne({ address: normId });
       if (!user || !user.proxyWallet) { 
           res.status(400).json({ error: 'Bot Wallet not activated.' }); 
           return; 
       }
 
       const config: BotConfig = {
-        userId,
+        userId: normId,
         walletConfig: user.proxyWallet,
         userAddresses: Array.isArray(userAddresses) ? userAddresses : userAddresses.split(',').map((s: string) => s.trim()),
         rpcUrl,
@@ -230,12 +232,11 @@ app.post('/api/bot/start', async (req: any, res: any) => {
         activePositions: user.activePositions || [],
         stats: user.stats,
         zeroDevRpc: process.env.ZERODEV_RPC,
-        startCursor: Math.floor(Date.now() / 1000) // Explicit manual start resets cursor
+        startCursor: Math.floor(Date.now() / 1000) 
       };
 
-      await startUserBot(userId, config);
+      await startUserBot(normId, config);
       
-      // Update DB state
       user.activeBotConfig = config;
       user.isBotRunning = true;
       await user.save();
@@ -250,25 +251,28 @@ app.post('/api/bot/start', async (req: any, res: any) => {
 // 6. Stop Bot
 app.post('/api/bot/stop', async (req: any, res: any) => {
     const { userId } = req.body;
-    const engine = ACTIVE_BOTS.get(userId);
+    const normId = userId.toLowerCase();
+    
+    const engine = ACTIVE_BOTS.get(normId);
     if (engine) engine.stop();
     
-    await User.updateOne({ address: userId }, { isBotRunning: false });
+    await User.updateOne({ address: normId }, { isBotRunning: false });
     res.json({ success: true, status: 'STOPPED' });
 });
 
 // 7. Bot Status & Logs
 app.get('/api/bot/status/:userId', async (req: any, res: any) => {
     const { userId } = req.params;
-    const engine = ACTIVE_BOTS.get(userId);
+    const normId = userId.toLowerCase();
+    
+    const engine = ACTIVE_BOTS.get(normId);
     
     try {
-        // Fetch latest history from DB
-        const tradeHistory = await Trade.find({ userId }).sort({ timestamp: -1 }).limit(50).lean();
-        const user = await User.findOne({ address: userId }).lean();
+        const tradeHistory = await Trade.find({ userId: normId }).sort({ timestamp: -1 }).limit(50).lean();
+        const user = await User.findOne({ address: normId }).lean();
 
         // Fetch Logs from DB instead of memory to ensure persistence across restarts
-        const dbLogs = await BotLog.find({ userId }).sort({ timestamp: -1 }).limit(100).lean();
+        const dbLogs = await BotLog.find({ userId: normId }).sort({ timestamp: -1 }).limit(100).lean();
         const formattedLogs = dbLogs.map(l => ({
             id: l._id.toString(),
             time: l.timestamp.toLocaleTimeString(),
@@ -276,7 +280,6 @@ app.get('/api/bot/status/:userId', async (req: any, res: any) => {
             message: l.message
         }));
 
-        // Convert DB trades to UI format
         const historyUI = tradeHistory.map((t: any) => ({
              ...t,
              timestamp: t.timestamp.toISOString(),
@@ -321,7 +324,7 @@ app.post('/api/registry', async (req, res) => {
 
         const profile = await Registry.create({
             address, 
-            listedBy, 
+            listedBy: listedBy.toLowerCase(), 
             listedAt: new Date().toISOString(),
             winRate: 0, totalPnl: 0, tradesLast30d: 0, followers: 0, copyCount: 0, copyProfitGenerated: 0
         });
@@ -331,11 +334,11 @@ app.post('/api/registry', async (req, res) => {
     }
 });
 
-// 9. Bridge History Routes
+// 9. Bridge Routes
 app.get('/api/bridge/history/:userId', async (req, res) => {
     const { userId } = req.params;
     try {
-        const history = await BridgeTransaction.find({ userId }).sort({ timestamp: -1 }).lean();
+        const history = await BridgeTransaction.find({ userId: userId.toLowerCase() }).sort({ timestamp: -1 }).lean();
         res.json(history.map((h: any) => ({ ...h, id: h.bridgeId })));
     } catch (e) {
         res.status(500).json({ error: 'DB Error' });
@@ -345,13 +348,13 @@ app.get('/api/bridge/history/:userId', async (req, res) => {
 app.post('/api/bridge/record', async (req, res) => {
     const { userId, transaction } = req.body;
     if (!userId || !transaction) { res.status(400).json({ error: 'Missing Data' }); return; }
+    const normId = userId.toLowerCase();
     
     try {
-        // Upsert based on bridgeId to handle status updates
         await BridgeTransaction.findOneAndUpdate(
-            { userId, bridgeId: transaction.id },
+            { userId: normId, bridgeId: transaction.id },
             { 
-                userId,
+                userId: normId,
                 bridgeId: transaction.id,
                 ...transaction
             },
@@ -363,8 +366,7 @@ app.post('/api/bridge/record', async (req, res) => {
     }
 });
 
-// --- SPA Fallback (Frontend) ---
-// If API route not matched, serve the React App
+// --- SPA Fallback ---
 app.get('*', (req, res) => {
     res.sendFile(path.join(distPath, 'index.html'));
 });
@@ -378,12 +380,7 @@ async function restoreBots() {
 
         for (const user of activeUsers) {
             if (user.activeBotConfig && user.proxyWallet) {
-                 
-                 // Smart Restore: Check last trade time to ensure no gap in data monitoring
                  const lastTrade = await Trade.findOne({ userId: user.address }).sort({ timestamp: -1 });
-                 
-                 // If we have history, resume from 1 second after last trade.
-                 // If no history, assume fresh start (or cap lookup to 1 hour ago)
                  const lastTime = lastTrade ? Math.floor(lastTrade.timestamp.getTime() / 1000) + 1 : Math.floor(Date.now() / 1000) - 3600;
                  
                  const config: BotConfig = {
@@ -394,7 +391,7 @@ async function restoreBots() {
                      startCursor: lastTime
                  };
                  await startUserBot(user.address, config);
-                 console.log(`✅ Restored Bot: ${user.address} (Resuming from ${new Date(lastTime*1000).toISOString()})`);
+                 console.log(`✅ Restored Bot: ${user.address}`);
             }
         }
     } catch (e) {
@@ -402,11 +399,9 @@ async function restoreBots() {
     }
 }
 
-// --- INIT ---
 connectDB(ENV.mongoUri).then(() => {
     app.listen(PORT, () => {
         console.log(`🌍 Bet Mirror Cloud Server running on port ${PORT}`);
-        console.log(`📂 Serving Frontend from ${distPath}`);
         restoreBots();
     });
 });
