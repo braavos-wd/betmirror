@@ -728,9 +728,12 @@ const App = () => {
       <header className="h-16 border-b border-gray-200 dark:border-terminal-border bg-white/80 dark:bg-terminal-card/50 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 h-full flex items-center justify-between">
             <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
+                <button 
+                    onClick={() => setActiveTab('dashboard')}
+                    className="w-8 h-8 rounded bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30 hover:bg-blue-700 transition-colors"
+                >
                     <Activity className="text-white" size={18} />
-                </div>
+                </button>
                 <div>
                     <h1 className="font-bold text-gray-900 dark:text-white tracking-tight leading-none">
                         <span className="text-blue-600">BET</span>
