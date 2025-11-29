@@ -36,7 +36,10 @@ export interface ITrade extends Document {
   timestamp: Date;
 }
 
-export interface IRegistry extends Document, TraderProfile {}
+export interface IRegistry extends Document, TraderProfile {
+    isSystem?: boolean; // If true, added by env var/admin
+    tags?: string[];
+}
 
 export interface IFeedback extends Document {
   userId: string;
@@ -119,6 +122,8 @@ const RegistrySchema = new Schema<IRegistry>({
   tradesLast30d: { type: Number, default: 0 },
   followers: { type: Number, default: 0 },
   isVerified: { type: Boolean, default: false },
+  isSystem: { type: Boolean, default: false },
+  tags: [String],
   listedBy: String,
   listedAt: String,
   copyCount: { type: Number, default: 0 },

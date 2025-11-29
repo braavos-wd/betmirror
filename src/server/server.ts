@@ -87,6 +87,40 @@ async function startUserBot(userId: string, config: BotConfig) {
     await engine.start();
 }
 
+// --- SYSTEM: Registry Seeder ---
+// Ensures wallets in .env are listed as "Official" in the Marketplace
+async function seedOfficialWallets() {
+    console.log('🌱 Seeding Official Wallets from Env...');
+    const officials = ENV.userAddresses; // From .env
+    
+    for (const address of officials) {
+        if(!address || address.length < 10) continue;
+        
+        try {
+            // Upsert (Insert or Update)
+            await Registry.findOneAndUpdate(
+                { address: { $regex: new RegExp(`^${address}$`, "i") } },
+                {
+                    address: address,
+                    isVerified: true,
+                    isSystem: true,
+                    listedBy: 'SYSTEM',
+                    tags: ['OFFICIAL', 'WHALE'],
+                    $setOnInsert: {
+                        listedAt: new Date().toISOString(),
+                        winRate: 0,
+                        totalPnl: 0
+                    }
+                },
+                { upsert: true }
+            );
+        } catch (e) {
+            console.error(`Failed to seed ${address}`, e);
+        }
+    }
+    console.log(`✅ Seeded ${officials.length} official wallets.`);
+}
+
 // --- API ROUTES ---
 
 // 0. Health Check (For Sliplane/AWS/Docker)
@@ -302,7 +336,8 @@ app.get('/api/bot/status/:userId', async (req: any, res: any) => {
 // 8. Registry Routes
 app.get('/api/registry', async (req, res) => {
     try {
-        const list = await Registry.find().sort({ winRate: -1 }).lean();
+        // Sort System wallets first, then high winrate
+        const list = await Registry.find().sort({ isSystem: -1, winRate: -1 }).lean();
         res.json(list);
     } catch (e) { res.status(500).json({error: 'DB Error'}); }
 });
@@ -401,7 +436,10 @@ async function restoreBots() {
     }
 }
 
-connectDB(ENV.mongoUri).then(() => {
+connectDB(ENV.mongoUri).then(async () => {
+    // Seed system wallets first
+    await seedOfficialWallets();
+    
     app.listen(PORT, () => {
         console.log(`🌍 Bet Mirror Cloud Server running on port ${PORT}`);
         restoreBots();

@@ -10,7 +10,7 @@ import {
   CheckCircle2, ArrowDownCircle, ArrowUpCircle, Brain, AlertCircle, Trophy, Globe, Zap, LogOut,
   Info, HelpCircle, ChevronRight, Rocket, Gauge, MessageSquare, Star, ArrowRightLeft, LifeBuoy,
   Sun, Moon, Loader2, Timer, Fuel, Check, BarChart3, ChevronDown, MousePointerClick,
-  Zap as ZapIcon, FileText, Twitter, Github, LockKeyhole
+  Zap as ZapIcon, FileText, Twitter, Github, LockKeyhole, BadgeCheck
 } from 'lucide-react';
 import { web3Service, USDC_POLYGON, USDC_ABI } from './src/services/web3.service';
 import { lifiService, BridgeTransactionRecord } from './src/services/lifi-bridge.service';
@@ -1184,7 +1184,6 @@ const App = () => {
             </div>
         )}
         
-        {/* ... (Rest of components remain same, just ensuring correct close brackets) ... */}
         {/* SYSTEM PAGE */}
         {activeTab === 'system' && systemStats && (
             <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
@@ -1671,6 +1670,12 @@ const App = () => {
                                                     <div className="text-gray-900 dark:text-white font-bold flex items-center gap-1">
                                                         {trader.ens || `${trader.address.slice(0,6)}...${trader.address.slice(-4)}`}
                                                         {trader.isVerified && <CheckCircle2 size={12} className="text-green-500"/>}
+                                                        {/* OFFICIAL BADGE UPDATE */}
+                                                        {((trader as any).isSystem || (trader as any).tags?.includes('OFFICIAL')) && (
+                                                            <span className="ml-1 text-[8px] bg-blue-600 text-white px-1.5 py-0.5 rounded uppercase tracking-wider flex items-center gap-0.5">
+                                                                <BadgeCheck size={8}/> OFFICIAL
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </div>
                                             </div>
