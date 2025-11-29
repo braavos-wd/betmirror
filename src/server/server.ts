@@ -159,10 +159,14 @@ app.post('/api/wallet/status', async (req: any, res: any) => {
 
 // 2. Activate Smart Account
 app.post('/api/wallet/activate', async (req: any, res: any) => {
+    console.log(`[ACTIVATION REQUEST] Received payload for user: ${req.body?.userId}`);
+    
     const { userId, serializedSessionKey, smartAccountAddress } = req.body;
     
     if (!userId || !serializedSessionKey || !smartAccountAddress) { 
-        res.status(400).json({ error: 'Missing activation parameters' }); return; 
+        console.error('[ACTIVATION ERROR] Missing fields:', { userId, hasKey: !!serializedSessionKey, hasAddress: !!smartAccountAddress });
+        res.status(400).json({ error: 'Missing activation parameters' }); 
+        return; 
     }
     const normId = userId.toLowerCase();
 
@@ -180,10 +184,10 @@ app.post('/api/wallet/activate', async (req: any, res: any) => {
             { proxyWallet: walletConfig },
             { upsert: true, new: true }
         );
-        console.log(`[ACTIVATION] Smart Account Activated: ${smartAccountAddress} (Owner: ${normId})`);
+        console.log(`[ACTIVATION SUCCESS] Smart Account Activated: ${smartAccountAddress} (Owner: ${normId})`);
         res.json({ success: true, address: smartAccountAddress });
     } catch (e: any) {
-        console.error("[ACTIVATION ERROR]", e);
+        console.error("[ACTIVATION DB ERROR]", e);
         res.status(500).json({ error: e.message || 'Failed to activate' });
     }
 });

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import axios from 'axios';
@@ -9,7 +10,7 @@ import {
   CheckCircle2, ArrowDownCircle, ArrowUpCircle, Brain, AlertCircle, Trophy, Globe, Zap, LogOut,
   Info, HelpCircle, ChevronRight, Rocket, Gauge, MessageSquare, Star, ArrowRightLeft, LifeBuoy,
   Sun, Moon, Loader2, Timer, Fuel, Check, BarChart3, ChevronDown, MousePointerClick,
-  Zap as ZapIcon, FileText, Twitter, Github, LockKeyhole, BadgeCheck, Search
+  Zap as ZapIcon, FileText, Twitter, Github, LockKeyhole, BadgeCheck, Search, BookOpen, ArrowRightCircle
 } from 'lucide-react';
 import { web3Service, USDC_POLYGON, USDC_ABI } from './src/services/web3.service';
 import { lifiService, BridgeTransactionRecord } from './src/services/lifi-bridge.service';
@@ -215,14 +216,12 @@ const ActivationView = ({
     const scanBlockchain = async () => {
         setChecking(true);
         setScanError('');
-        setRecoveryMode(false);
         setComputedAddress('');
 
         try {
             // 1. Force Check Chain
             if (chainId !== 137) {
                 // If wrong chain, we can't reliably scan yet.
-                // We'll try to get the client anyway, which might trigger switch
                 try {
                     await web3Service.getViemWalletClient(137);
                 } catch (e) {
@@ -238,7 +237,7 @@ const ActivationView = ({
             
             if (address) {
                 setComputedAddress(address);
-                // 3. Check balance
+                // 3. Check balance (optional, just for display)
                 try {
                     const polyProvider = new JsonRpcProvider('https://polygon-rpc.com');
                     const usdcContract = new Contract(USDC_POLYGON, USDC_ABI, polyProvider);
@@ -250,8 +249,8 @@ const ActivationView = ({
                     setExistingBalance('0.00');
                 }
                 
-                // If we found an address, we assume recovery mode is valid 
-                // (It's always valid because the address is deterministic)
+                // CRITICAL: We always enable recovery mode if address is found, 
+                // because the account exists on-chain even if balance is 0.
                 setRecoveryMode(true);
             } else {
                 setScanError("Could not calculate Smart Account address. RPC Error?");
@@ -331,6 +330,23 @@ const ActivationView = ({
                     </div>
                 )}
 
+                <div className="space-y-4">
+                    <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/5">
+                        <CheckCircle2 size={16} className="text-green-500 mt-1" />
+                        <div>
+                            <span className="text-sm font-bold text-gray-900 dark:text-white">Non-Custodial Security</span>
+                            <p className="text-xs text-gray-500">You hold the admin keys. We only get trade permissions.</p>
+                        </div>
+                    </div>
+                    <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/5">
+                        <CheckCircle2 size={16} className="text-green-500 mt-1" />
+                        <div>
+                            <span className="text-sm font-bold text-gray-900 dark:text-white">Gas Abstraction</span>
+                            <p className="text-xs text-gray-500">ZeroDev Smart Accounts handle gas optimization.</p>
+                        </div>
+                    </div>
+                </div>
+
                 {/* --- Network Warning --- */}
                 {chainId !== 137 && !checking && (
                     <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-700/50 flex flex-col gap-2">
@@ -351,10 +367,10 @@ const ActivationView = ({
                 )}
 
                 {/* --- Manual Scan Button (If nothing found yet and no error) --- */}
-                {!recoveryMode && !checking && !scanError && chainId === 137 && (
+                {!recoveryMode && !checking && !scanError && (
                     <div className="flex justify-center">
                         <button onClick={scanBlockchain} className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1">
-                            <Search size={12}/> Scan for existing account
+                            <Search size={12}/> {chainId === 137 ? "Re-scan for account" : "Connect to Polygon & Scan"}
                         </button>
                     </div>
                 )}
@@ -407,23 +423,6 @@ const ActivationView = ({
                             <div>
                                 <h3 className="text-xl font-bold text-gray-900 dark:text-white">Funds Safety & Recovery Guide</h3>
                                 <p className="text-xs text-gray-500">How Account Abstraction protects your assets.</p>
-                            </div>
-                        </div>
-
-                        <div className="space-y-4">
-                            <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/5">
-                                <CheckCircle2 size={16} className="text-green-500 mt-1" />
-                                <div>
-                                    <span className="text-sm font-bold text-gray-900 dark:text-white">Non-Custodial Security</span>
-                                    <p className="text-xs text-gray-500">You hold the admin keys. We only get trade permissions.</p>
-                                </div>
-                            </div>
-                            <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/5">
-                                <CheckCircle2 size={16} className="text-green-500 mt-1" />
-                                <div>
-                                    <span className="text-sm font-bold text-gray-900 dark:text-white">Gas Abstraction</span>
-                                    <p className="text-xs text-gray-500">ZeroDev Smart Accounts handle gas optimization.</p>
-                                </div>
                             </div>
                         </div>
 
@@ -895,7 +894,7 @@ const App = () => {
           },
           autoCashout: {
               enabled: config.enableAutoCashout,
-              maxAmount: config.maxRetentionAmount,
+              maxRetentionAmount: config.maxRetentionAmount,
               destinationAddress: config.coldWalletAddress || userAddress
           }
       };
@@ -1820,19 +1819,82 @@ const App = () => {
 
         {/* HELP PAGE */}
         {activeTab === 'help' && (
-            <div className="max-w-3xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">Help & Support</h2>
-                <div className="space-y-4">
-                    <div className="glass-panel p-6 rounded-xl border border-gray-200 dark:border-terminal-border">
-                        <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">How do I fund my bot?</h3>
-                        <p className="text-gray-500 dark:text-gray-400 text-sm">Go to the <strong>Bridge</strong> tab. You can deposit ETH, BNB, or SOL from other chains directly into your Polygon Smart Account. The system handles the swapping and bridging automatically.</p>
+            <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300 pb-12">
+                <div className="flex flex-col gap-2">
+                    <h2 className="text-3xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
+                        <BookOpen className="text-blue-600"/> Help & Knowledge Base
+                    </h2>
+                    <p className="text-gray-500 dark:text-gray-400">Everything you need to know about Smart Accounts, Gas, and Recovery.</p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-6">
+                    {/* 1. FUNDING */}
+                    <div className="glass-panel p-6 rounded-xl border border-gray-200 dark:border-terminal-border relative overflow-hidden group">
+                        <div className="absolute -right-4 -top-4 opacity-5 group-hover:opacity-10 transition-opacity"><Globe size={120}/></div>
+                        <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-3 flex items-center gap-2"><DollarSign className="text-green-500" size={20}/> How do I fund my bot?</h3>
+                        <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+                            Your Smart Account lives on the <strong>Polygon</strong> blockchain. You have two options:
+                        </p>
+                        <ul className="mt-3 space-y-2 text-sm text-gray-600 dark:text-gray-400">
+                            <li className="flex gap-2"><ArrowRightCircle size={16} className="text-blue-500 shrink-0"/> <strong>Direct Deposit:</strong> If you have USDC on Polygon, send it directly to your Smart Account Address shown in the dashboard.</li>
+                            <li className="flex gap-2"><ArrowRightCircle size={16} className="text-blue-500 shrink-0"/> <strong>Cross-Chain Bridge:</strong> Use the "Bridge" tab. You can deposit ETH, SOL, or BNB from other chains. Our partner Li.Fi will automatically swap and bridge it to USDC on Polygon for you in one click.</li>
+                        </ul>
                     </div>
+
+                    {/* 2. SECURITY DEEP DIVE */}
+                    <div className="glass-panel p-6 rounded-xl border border-gray-200 dark:border-terminal-border bg-blue-50/50 dark:bg-blue-900/10">
+                        <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-3 flex items-center gap-2"><Shield className="text-blue-600" size={20}/> Security Deep Dive: Non-Custodial</h3>
+                        <div className="space-y-4 text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
+                            <p>
+                                When we say "Non-Custodial", we mean <strong>we physically cannot take your money</strong>. Here is the technical breakdown:
+                            </p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="p-4 bg-white dark:bg-black/20 rounded-lg border border-gray-200 dark:border-white/10">
+                                    <h4 className="font-bold text-gray-900 dark:text-white mb-2">🔑 The Owner Key (You)</h4>
+                                    <p className="text-xs">Your MetaMask/Phantom wallet is the "Root Admin" of the Smart Contract. Only you can sign a transaction to "Withdraw" funds.</p>
+                                </div>
+                                <div className="p-4 bg-white dark:bg-black/20 rounded-lg border border-gray-200 dark:border-white/10">
+                                    <h4 className="font-bold text-gray-900 dark:text-white mb-2">🤖 The Session Key (Us)</h4>
+                                    <p className="text-xs">The server holds a limited "Session Key". The Smart Contract is programmed to <strong>REJECT</strong> any withdrawal attempt signed by this key. It is only allowed to call `createOrder` on Polymarket.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 3. GAS ABSTRACTION */}
+                    <div className="glass-panel p-6 rounded-xl border border-gray-200 dark:border-terminal-border">
+                        <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-3 flex items-center gap-2"><Fuel className="text-purple-500" size={20}/> What is "Gas Abstraction"?</h3>
+                        <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-4">
+                            Normally, you need <strong>MATIC</strong> (POL) tokens to pay for transaction fees on Polygon. This is annoying if you only have USDC.
+                        </p>
+                        <div className="flex items-center gap-4 p-4 bg-purple-50 dark:bg-purple-900/10 rounded-lg border border-purple-100 dark:border-purple-500/20">
+                            <Zap size={24} className="text-purple-600 dark:text-purple-400 shrink-0"/>
+                            <div>
+                                <h4 className="text-sm font-bold text-gray-900 dark:text-white">ZeroDev Paymaster</h4>
+                                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                                    We use a "Paymaster" service. When you trade, the Paymaster pays the MATIC for you. In exchange, the Smart Account takes a tiny amount of USDC from your balance to reimburse the Paymaster. <strong>Result: You never need to buy MATIC.</strong>
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 4. RECOVERY */}
+                    <div className="glass-panel p-6 rounded-xl border border-gray-200 dark:border-terminal-border">
+                        <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-3 flex items-center gap-2"><RefreshCw className="text-orange-500" size={20}/> What if the website disappears?</h3>
+                        <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+                            Because your Smart Account is on the blockchain, you can interact with it directly via any ERC-4337 explorer (like Jiffyscan) or by using the ZeroDev recovery portal. As long as you have your MetaMask/Phantom seed phrase, you can always recover your funds, even if Bet Mirror servers are destroyed.
+                        </p>
+                    </div>
+
+                    {/* 5. SAFU Assurance */}
                     <div className="glass-panel p-6 rounded-xl border border-gray-200 dark:border-terminal-border">
                         <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">Is my money safe?</h3>
                         <p className="text-gray-500 dark:text-gray-400 text-sm">Yes. We use <strong>Account Abstraction</strong>. The bot server only has permission to place trades. It physically cannot sign a withdrawal transaction. Only your main wallet can withdraw funds.</p>
                     </div>
+
+                    {/* 6. Fees Exaplined */}
                     <div className="glass-panel p-6 rounded-xl border border-gray-200 dark:border-terminal-border">
-                        <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">How does the 1% Fee work?</h3>
+                        <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">How do the 1% Fee work?</h3>
                         <p className="text-gray-500 dark:text-gray-400 text-sm">When you copy a profitable trade, 1% of the net profit is automatically sent to the wallet that you copied (if they are registered). This incentivizes the best traders to list themselves.</p>
                     </div>
                 </div>

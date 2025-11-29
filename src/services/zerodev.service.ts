@@ -56,6 +56,8 @@ export class ZeroDevService {
    */
   async computeMasterAccountAddress(ownerWalletClient: WalletClient) {
       try {
+          if (!ownerWalletClient) throw new Error("Missing owner wallet client");
+
           const ecdsaValidator = await signerToEcdsaValidator(this.publicClient, {
               entryPoint: ENTRY_POINT,
               signer: ownerWalletClient as any,
@@ -69,8 +71,9 @@ export class ZeroDevService {
           });
 
           return account.address;
-      } catch (e) {
-          console.error("Failed to compute address", e);
+      } catch (e: any) {
+          console.error("Failed to compute deterministic address (ZeroDev):", e.message);
+          // Don't swallow error completely, return null but log detailed error
           return null;
       }
   }
