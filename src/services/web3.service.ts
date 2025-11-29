@@ -1,3 +1,4 @@
+
 import { BrowserProvider, Contract, parseUnits, Eip1193Provider } from 'ethers';
 import { createWalletClient, custom, WalletClient } from 'viem';
 import { polygon } from 'viem/chains';
@@ -71,8 +72,8 @@ export class Web3Service {
               return; // We are good
           }
 
-          if (i === 0) {
-              // Only trigger switch on first attempt
+          if (i === 0 || i === 2) {
+              // Trigger switch on first and third attempt (aggressive retry)
               await this.switchToChain(targetChainId);
           }
           
@@ -132,8 +133,8 @@ export class Web3Service {
       } catch (e: any) {
           console.error(e);
           // Catch common RPC errors
-          if (e.code === 'CALL_EXCEPTION' || e.message?.includes('estimateGas')) {
-              throw new Error("Transaction failed during gas estimation. You likely have insufficient MATIC for gas or insufficient USDC funds on Polygon.");
+          if (e.code === 'CALL_EXCEPTION' || e.message?.includes('estimateGas') || e.message?.includes('missing revert data')) {
+              throw new Error("Transaction failed during gas estimation. You likely have insufficient MATIC/POL for gas or insufficient USDC funds on Polygon.");
           }
           throw e;
       }

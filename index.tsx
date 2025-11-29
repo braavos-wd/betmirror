@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import axios from 'axios';
@@ -437,7 +438,8 @@ const App = () => {
          if(e.message?.includes('Chain') || e.message?.includes('Provider') || e.message?.includes('network')) {
              alert("⚠️ Network Mismatch\n\nPlease open your wallet and manually switch the network to Polygon Mainnet (Chain ID 137) before trying again.");
          } else {
-             alert("Activation failed: " + e.message);
+             // Show actual server error
+             alert("Activation failed: " + (e.response?.data?.error || e.message));
          }
      } finally {
          setIsActivating(false);
@@ -466,7 +468,7 @@ const App = () => {
   const handleDeposit = async () => {
       if (!proxyAddress) return;
       
-      // 1. Pre-Check Balances before trying
+      // 1. Pre-Check USDC Balance
       const availableUsdc = parseFloat(mainWalletBal.usdc);
       const requestedAmount = parseFloat(depositAmount);
       
@@ -479,6 +481,15 @@ const App = () => {
           return;
       }
 
+      // 2. Pre-Check Gas Balance (POL/MATIC)
+      // Transactions will fail with "missing revert data" if user has no gas
+      const gasBalance = parseFloat(mainWalletBal.native);
+      if (gasBalance < 0.01) {
+          alert("⚠️ Insufficient Gas\n\nYou need at least 0.01 POL (Matic) to pay for network fees.\nPlease bridge or transfer POL to your wallet.");
+          setIsDepositing(false);
+          return;
+      }
+
       setIsDepositing(true);
       try {
           await web3Service.deposit(proxyAddress, depositAmount);
@@ -486,8 +497,8 @@ const App = () => {
           setIsDepositing(false);
       } catch (e: any) {
           // Handle explicit errors
-          if (e.message.includes("funds")) {
-              alert("Insufficient USDC or MATIC for gas on Polygon.");
+          if (e.message.includes("funds") || e.message.includes("insufficient")) {
+              alert("Transaction Failed: Insufficient funds for gas or value.");
           } else {
               alert(`Deposit Failed: ${e.message}`);
           }
@@ -745,12 +756,9 @@ const App = () => {
       <header className="h-16 border-b border-gray-200 dark:border-terminal-border bg-white/80 dark:bg-terminal-card/50 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 h-full flex items-center justify-between">
             <div className="flex items-center gap-3">
-                <button 
-                    onClick={() => setActiveTab('dashboard')}
-                    className="w-8 h-8 rounded bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30 hover:bg-blue-700 transition-colors"
-                >
+                <div className="w-8 h-8 rounded bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
                     <Activity className="text-white" size={18} />
-                </button>
+                </div>
                 <div>
                     <h1 className="font-bold text-gray-900 dark:text-white tracking-tight leading-none">
                         <span className="text-blue-600">BET</span>
@@ -999,6 +1007,7 @@ const App = () => {
             </div>
         )}
         
+        {/* ... (Rest of components remain same, just ensuring correct close brackets) ... */}
         {/* SYSTEM PAGE */}
         {activeTab === 'system' && systemStats && (
             <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">

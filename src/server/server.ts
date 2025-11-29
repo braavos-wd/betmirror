@@ -25,7 +25,8 @@ const dbRegistryService = new DbRegistryService();
 const ACTIVE_BOTS = new Map<string, BotEngine>();
 
 app.use(cors());
-app.use(express.json() as any); 
+// INCREASED LIMIT: Session keys are large strings
+app.use(express.json({ limit: '10mb' }) as any); 
 
 // --- STATIC FILES (For Production) ---
 // This allows the Node server to serve the React app
@@ -147,8 +148,9 @@ app.post('/api/wallet/activate', async (req: any, res: any) => {
         );
         console.log(`[ACTIVATION] Smart Account Activated: ${smartAccountAddress} (Owner: ${normId})`);
         res.json({ success: true, address: smartAccountAddress });
-    } catch (e) {
-        res.status(500).json({ error: 'Failed to activate' });
+    } catch (e: any) {
+        console.error("[ACTIVATION ERROR]", e);
+        res.status(500).json({ error: e.message || 'Failed to activate' });
     }
 });
 
