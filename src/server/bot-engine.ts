@@ -13,6 +13,7 @@ import { UserStats } from '../domain/user.types.js';
 import { ProxyWalletConfig } from '../domain/wallet.types.js'; 
 import { ClobClient, Chain, ApiKeyCreds } from '@polymarket/clob-client';
 import { Wallet, AbstractSigner, Provider, JsonRpcProvider, TransactionRequest } from 'ethers';
+import { BotLog } from '../database/index.js';
 
 // --- ADAPTER: ZeroDev (Viem) -> Ethers.js Signer ---
 class KernelEthersSigner extends AbstractSigner {
@@ -109,6 +110,7 @@ export class BotEngine {
   private client?: ClobClient & { wallet: any };
   private watchdogTimer?: NodeJS.Timeout;
   
+  // Use in-memory logs only as a buffer/cache if needed, but primary source is DB
   private logs: any[] = [];
   private activePositions: ActivePosition[] = [];
   
@@ -132,12 +134,15 @@ export class BotEngine {
       if (config.stats) {
           this.stats = config.stats;
       }
+      // Log initial wakeup
+      this.addLog('info', 'Bot Engine Initialized');
   }
 
-  public getLogs() { return this.logs; }
   public getStats() { return this.stats; }
 
-  private addLog(type: 'info' | 'warn' | 'error' | 'success', message: string) {
+  // Async log writing to DB
+  private async addLog(type: 'info' | 'warn' | 'error' | 'success', message: string) {
+    // 1. Write to memory (for immediate polling before DB confirms)
     const log = {
       id: Math.random().toString(36) + Date.now(),
       time: new Date().toLocaleTimeString(),
@@ -145,26 +150,15 @@ export class BotEngine {
       message
     };
     this.logs.unshift(log);
-    if (this.logs.length > 200) this.logs.pop();
-  }
+    if (this.logs.length > 50) this.logs.pop();
 
-  private async recordTrade(entry: Omit<TradeHistoryEntry, 'id' | 'timestamp'>) {
-      const historyItem: TradeHistoryEntry = {
-          id: Math.random().toString(36).substr(2, 9),
-          timestamp: new Date().toISOString(),
-          ...entry
-      };
-      
-      if (entry.status !== 'SKIPPED') {
-          this.stats.tradesCount++;
-          this.stats.totalVolume += entry.size;
-          if (entry.pnl) {
-              this.stats.totalPnl += entry.pnl;
-          }
-      }
-
-      if (this.callbacks?.onTradeComplete) await this.callbacks.onTradeComplete(historyItem);
-      if (this.callbacks?.onStatsUpdate) await this.callbacks.onStatsUpdate(this.stats);
+    // 2. Write to MongoDB (Fire and Forget)
+    BotLog.create({
+        userId: this.config.userId,
+        type,
+        message,
+        timestamp: new Date()
+    }).catch(e => console.error("Failed to persist log", e));
   }
 
   async revokePermissions() {
@@ -180,7 +174,7 @@ export class BotEngine {
     
     try {
       this.isRunning = true;
-      this.addLog('info', 'Starting Server-Side Bot Engine...');
+      await this.addLog('info', 'Starting Server-Side Bot Engine...');
 
       const logger = {
         info: (msg: string) => { console.log(`[${this.config.userId}] ${msg}`); this.addLog('info', msg); },
@@ -206,13 +200,13 @@ export class BotEngine {
 
       // 1. Smart Account Strategy
       if (this.config.walletConfig?.type === 'SMART_ACCOUNT' && this.config.walletConfig.serializedSessionKey) {
-          this.addLog('info', '🔐 Initializing ZeroDev Smart Account Session...');
+          await this.addLog('info', '🔐 Initializing ZeroDev Smart Account Session...');
           
           const aaService = new ZeroDevService(this.config.zeroDevRpc || 'https://rpc.zerodev.app/api/v2/bundler/DEFAULT');
           const { address, client: kernelClient } = await aaService.createBotClient(this.config.walletConfig.serializedSessionKey);
           
           walletAddress = address;
-          this.addLog('success', `Smart Account Active: ${walletAddress.slice(0,6)}... (Session Key)`);
+          await this.addLog('success', `Smart Account Active: ${walletAddress.slice(0,6)}... (Session Key)`);
           
           const provider = new JsonRpcProvider(this.config.rpcUrl);
           signerImpl = new KernelEthersSigner(kernelClient, address, provider);
@@ -220,7 +214,7 @@ export class BotEngine {
 
       } else {
           // 2. Legacy EOA Strategy
-          this.addLog('info', 'Using Standard EOA Wallet');
+          await this.addLog('info', 'Using Standard EOA Wallet');
           const activeKey = this.config.privateKey || this.config.walletConfig?.sessionPrivateKey;
           if (!activeKey) throw new Error("No valid signing key found for EOA.");
           
@@ -229,7 +223,7 @@ export class BotEngine {
           walletAddress = signerImpl.address;
 
           if (this.config.polymarketApiKey && this.config.polymarketApiSecret && this.config.polymarketApiPassphrase) {
-              this.addLog('info', '⚡ API Keys Loaded (High Performance Mode)');
+              await this.addLog('info', '⚡ API Keys Loaded (High Performance Mode)');
               clobCreds = {
                   key: this.config.polymarketApiKey,
                   secret: this.config.polymarketApiSecret,
@@ -248,7 +242,7 @@ export class BotEngine {
 
       this.client = Object.assign(clobClient, { wallet: signerImpl });
 
-      this.addLog('success', `Bot Online: ${walletAddress.slice(0,6)}...`);
+      await this.addLog('success', `Bot Online: ${walletAddress.slice(0,6)}...`);
 
       const notifier = new NotificationService(env, logger);
       
@@ -269,7 +263,7 @@ export class BotEngine {
         logger
       });
 
-      this.addLog('info', 'Checking Token Allowances...');
+      await this.addLog('info', 'Checking Token Allowances...');
       const approved = await this.executor.ensureAllowance();
       this.stats.allowanceApproved = approved;
 
@@ -290,7 +284,7 @@ export class BotEngine {
           let riskScore = 5;
 
           if (this.config.geminiApiKey && this.config.geminiApiKey.length > 10) {
-            this.addLog('info', '🤖 AI Analyzing signal...');
+            await this.addLog('info', '🤖 AI Analyzing signal...');
             const analysis = await aiAgent.analyzeTrade(
               `Market: ${signal.marketId}`,
               signal.side,
@@ -306,11 +300,11 @@ export class BotEngine {
           }
 
           if (shouldExecute) {
-            this.addLog('info', `Executing Copy: ${signal.side} ${signal.outcome}`);
+            await this.addLog('info', `Executing Copy: ${signal.side} ${signal.outcome}`);
             
             try {
                 if(this.executor) await this.executor.copyTrade(signal);
-                this.addLog('success', `Trade Executed Successfully!`);
+                await this.addLog('success', `Trade Executed Successfully!`);
                 
                 let realPnl = 0;
                 
@@ -330,10 +324,10 @@ export class BotEngine {
                         const entry = this.activePositions[posIndex];
                         const yieldPercent = (signal.price - entry.entryPrice) / entry.entryPrice;
                         realPnl = signal.sizeUsd * yieldPercent;
-                        this.addLog('info', `Realized PnL: $${realPnl.toFixed(2)} (${(yieldPercent*100).toFixed(1)}%)`);
+                        await this.addLog('info', `Realized PnL: $${realPnl.toFixed(2)} (${(yieldPercent*100).toFixed(1)}%)`);
                         this.activePositions.splice(posIndex, 1);
                     } else {
-                         this.addLog('warn', `Closing tracked position (Entry lost or manual). PnL set to 0.`);
+                         await this.addLog('warn', `Closing tracked position (Entry lost or manual). PnL set to 0.`);
                          realPnl = 0; 
                     }
                 }
@@ -374,7 +368,7 @@ export class BotEngine {
                 }, 15000);
 
             } catch (err: any) {
-                this.addLog('error', `Execution Failed: ${err.message}`);
+                await this.addLog('error', `Execution Failed: ${err.message}`);
             }
           } else {
              // Log Skipped Trade
@@ -398,11 +392,11 @@ export class BotEngine {
       // Watchdog for Auto-Take Profit
       this.watchdogTimer = setInterval(() => this.checkAutoTp(), 10000) as unknown as NodeJS.Timeout;
       
-      this.addLog('success', 'Bot Engine Active & Monitoring 24/7');
+      await this.addLog('success', 'Bot Engine Active & Monitoring 24/7');
 
     } catch (e: any) {
       this.isRunning = false;
-      this.addLog('error', `Startup Failed: ${e.message}`);
+      await this.addLog('error', `Startup Failed: ${e.message}`);
     }
   }
 
@@ -419,7 +413,7 @@ export class BotEngine {
                   const gainPercent = ((bestBid - pos.entryPrice) / pos.entryPrice) * 100;
                   
                   if (gainPercent >= this.config.autoTp) {
-                      this.addLog('success', `🎯 Auto TP Hit! ${pos.outcome} is up +${gainPercent.toFixed(1)}%`);
+                      await this.addLog('success', `🎯 Auto TP Hit! ${pos.outcome} is up +${gainPercent.toFixed(1)}%`);
                       
                       const success = await this.executor.executeManualExit(pos, bestBid);
                       
@@ -443,6 +437,41 @@ export class BotEngine {
                   }
               }
           } catch (e) { /* silent fail */ }
+      }
+  }
+
+  private async recordTrade(data: {
+      marketId: string;
+      outcome: string;
+      side: 'BUY' | 'SELL';
+      price: number;
+      size: number;
+      aiReasoning?: string;
+      riskScore?: number;
+      pnl?: number;
+      status: 'OPEN' | 'CLOSED' | 'SKIPPED';
+      txHash?: string;
+  }) {
+      const entry: TradeHistoryEntry = {
+          id: Math.random().toString(36).substring(7),
+          timestamp: new Date().toISOString(),
+          ...data
+      };
+
+      if (data.status !== 'SKIPPED') {
+          this.stats.tradesCount = (this.stats.tradesCount || 0) + 1;
+          this.stats.totalVolume = (this.stats.totalVolume || 0) + data.size;
+          if (data.pnl) {
+              this.stats.totalPnl = (this.stats.totalPnl || 0) + data.pnl;
+          }
+      }
+
+      if (this.callbacks?.onTradeComplete) {
+          await this.callbacks.onTradeComplete(entry);
+      }
+
+      if (data.status !== 'SKIPPED' && this.callbacks?.onStatsUpdate) {
+          await this.callbacks.onStatsUpdate(this.stats);
       }
   }
 

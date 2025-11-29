@@ -1,18 +1,14 @@
 import { Contract, parseUnits } from 'ethers';
-import { alphaRegistry } from './alpha-registry.service.js';
 const USDC_ABI = [
     'function transfer(address to, uint256 amount) returns (bool)',
 ];
 export class FeeDistributorService {
-    constructor(wallet, env, logger) {
+    constructor(wallet, env, logger, registryService) {
         this.wallet = wallet;
         this.env = env;
         this.logger = logger;
+        this.registryService = registryService;
         this.usdcContract = new Contract(env.usdcContractAddress, USDC_ABI, wallet);
-        // Ensure the registry client knows where to look
-        if (env.registryApiUrl) {
-            alphaRegistry.setApiUrl(env.registryApiUrl);
-        }
     }
     /**
      * Distributes 1% fee to the 'Finder' (Lister) and 1% to the Admin Platform.
@@ -20,11 +16,10 @@ export class FeeDistributorService {
     async distributeFeesOnProfit(tradeId, netProfitUsdc, traderAddressWeCopied) {
         if (netProfitUsdc <= 0)
             return null;
-        // 1. Lookup Lister
-        const listerAddress = await alphaRegistry.getListerForWallet(traderAddressWeCopied);
+        // 1. Lookup Lister via injected service (DB or HTTP)
+        const listerAddress = await this.registryService.getListerForWallet(traderAddressWeCopied);
         if (!listerAddress) {
-            // No lister means no fee for them. We might still pay admin fee, 
-            // but for this logic we'll skip if no registry entry found to keep it simple.
+            // No lister means no fee for them.
             return null;
         }
         // 2. Calculate Shares (1% each)

@@ -6,7 +6,7 @@ import path from 'path';
 import 'dotenv/config';
 import { BotEngine, BotConfig } from './bot-engine.js';
 import { ProxyWalletConfig } from '../domain/wallet.types.js';
-import { connectDB, User, Registry, Trade, Feedback, BridgeTransaction } from '../database/index.js';
+import { connectDB, User, Registry, Trade, Feedback, BridgeTransaction, BotLog } from '../database/index.js';
 import { loadEnv } from '../config/env.js';
 import { DbRegistryService } from '../services/db-registry.service.js';
 
@@ -267,6 +267,15 @@ app.get('/api/bot/status/:userId', async (req: any, res: any) => {
         const tradeHistory = await Trade.find({ userId }).sort({ timestamp: -1 }).limit(50).lean();
         const user = await User.findOne({ address: userId }).lean();
 
+        // Fetch Logs from DB instead of memory to ensure persistence across restarts
+        const dbLogs = await BotLog.find({ userId }).sort({ timestamp: -1 }).limit(100).lean();
+        const formattedLogs = dbLogs.map(l => ({
+            id: l._id.toString(),
+            time: l.timestamp.toLocaleTimeString(),
+            type: l.type,
+            message: l.message
+        }));
+
         // Convert DB trades to UI format
         const historyUI = tradeHistory.map((t: any) => ({
              ...t,
@@ -275,8 +284,8 @@ app.get('/api/bot/status/:userId', async (req: any, res: any) => {
         }));
 
         res.json({ 
-            isRunning: engine ? engine.isRunning : false,
-            logs: engine ? engine.getLogs() : [],
+            isRunning: engine ? engine.isRunning : (user?.isBotRunning || false),
+            logs: formattedLogs,
             history: historyUI,
             stats: user?.stats || null
         });

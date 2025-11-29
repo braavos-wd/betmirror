@@ -50,6 +50,13 @@ export interface IBridgeTransaction extends Document, Omit<BridgeTransactionReco
   bridgeId: string; // Internal ID
 }
 
+export interface IBotLog extends Document {
+  userId: string;
+  type: 'info' | 'warn' | 'error' | 'success';
+  message: string;
+  timestamp: Date;
+}
+
 // --- Schemas ---
 
 const ActivePositionSchema = new Schema({
@@ -139,6 +146,13 @@ const BridgeTransactionSchema = new Schema<IBridgeTransaction>({
   fees: String
 });
 
+const BotLogSchema = new Schema<IBotLog>({
+  userId: { type: String, required: true, index: true },
+  type: String,
+  message: String,
+  timestamp: { type: Date, default: Date.now, expires: 86400 * 3 } // TTL 3 days
+});
+
 // --- Models ---
 
 export const User = mongoose.model<IUser>('User', UserSchema);
@@ -146,6 +160,7 @@ export const Trade = mongoose.model<ITrade>('Trade', TradeSchema);
 export const Registry = mongoose.model<IRegistry>('Registry', RegistrySchema);
 export const Feedback = mongoose.model<IFeedback>('Feedback', FeedbackSchema);
 export const BridgeTransaction = mongoose.model<IBridgeTransaction>('BridgeTransaction', BridgeTransactionSchema);
+export const BotLog = mongoose.model<IBotLog>('BotLog', BotLogSchema);
 
 // --- Connection ---
 

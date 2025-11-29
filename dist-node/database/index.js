@@ -80,12 +80,19 @@ const BridgeTransactionSchema = new Schema({
     tool: String,
     fees: String
 });
+const BotLogSchema = new Schema({
+    userId: { type: String, required: true, index: true },
+    type: String,
+    message: String,
+    timestamp: { type: Date, default: Date.now, expires: 86400 * 3 } // TTL 3 days
+});
 // --- Models ---
 export const User = mongoose.model('User', UserSchema);
 export const Trade = mongoose.model('Trade', TradeSchema);
 export const Registry = mongoose.model('Registry', RegistrySchema);
 export const Feedback = mongoose.model('Feedback', FeedbackSchema);
 export const BridgeTransaction = mongoose.model('BridgeTransaction', BridgeTransactionSchema);
+export const BotLog = mongoose.model('BotLog', BotLogSchema);
 // --- Connection ---
 export const connectDB = async (uri) => {
     try {

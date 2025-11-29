@@ -4,14 +4,17 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import 'dotenv/config';
 import { BotEngine } from './bot-engine.js';
-import { connectDB, User, Registry, Trade, Feedback, BridgeTransaction } from '../database/index.js';
+import { connectDB, User, Registry, Trade, Feedback, BridgeTransaction, BotLog } from '../database/index.js';
 import { loadEnv } from '../config/env.js';
+import { DbRegistryService } from '../services/db-registry.service.js';
 // ESM compatibility
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 const ENV = loadEnv();
+// Service Singletons
+const dbRegistryService = new DbRegistryService();
 // In-Memory Bot Instances (Runtime State)
 const ACTIVE_BOTS = new Map();
 app.use(cors());
@@ -25,13 +28,12 @@ async function startUserBot(userId, config) {
     if (ACTIVE_BOTS.has(userId)) {
         ACTIVE_BOTS.get(userId)?.stop();
     }
-    // Default start cursor to now if not provided, to prevent replay
+    // Determine start cursor to prevent gaps or replays. 
+    // If config has explicit startCursor (from manual start), use it.
+    // Otherwise, it defaults to NOW in the engine, but we want it to handle restarts gracefully.
     const startCursor = config.startCursor || Math.floor(Date.now() / 1000);
-    // Ensure the bot knows where the API is (Internal communication)
-    // In a monolithic deployment, it's this same server.
-    const registryApiUrl = `http://localhost:${PORT}/api`;
-    const engineConfig = { ...config, startCursor, registryApiUrl };
-    const engine = new BotEngine(engineConfig, {
+    const engineConfig = { ...config, startCursor };
+    const engine = new BotEngine(engineConfig, dbRegistryService, {
         onPositionsUpdate: async (positions) => {
             await User.updateOne({ address: userId }, { activePositions: positions });
         },
@@ -72,6 +74,15 @@ async function startUserBot(userId, config) {
     await engine.start();
 }
 // --- API ROUTES ---
+// 0. Health Check (For Sliplane/AWS/Docker)
+app.get('/health', (req, res) => {
+    res.status(200).json({
+        status: 'ok',
+        uptime: process.uptime(),
+        activeBots: ACTIVE_BOTS.size,
+        timestamp: new Date().toISOString()
+    });
+});
 // 1. Check Status / Init
 app.post('/api/wallet/status', async (req, res) => {
     const { userId } = req.body;
@@ -191,7 +202,8 @@ app.post('/api/bot/start', async (req, res) => {
             autoCashout: autoCashout,
             activePositions: user.activePositions || [],
             stats: user.stats,
-            zeroDevRpc: process.env.ZERODEV_RPC
+            zeroDevRpc: process.env.ZERODEV_RPC,
+            startCursor: Math.floor(Date.now() / 1000) // Explicit manual start resets cursor
         };
         await startUserBot(userId, config);
         // Update DB state
@@ -222,6 +234,14 @@ app.get('/api/bot/status/:userId', async (req, res) => {
         // Fetch latest history from DB
         const tradeHistory = await Trade.find({ userId }).sort({ timestamp: -1 }).limit(50).lean();
         const user = await User.findOne({ address: userId }).lean();
+        // Fetch Logs from DB instead of memory to ensure persistence across restarts
+        const dbLogs = await BotLog.find({ userId }).sort({ timestamp: -1 }).limit(100).lean();
+        const formattedLogs = dbLogs.map(l => ({
+            id: l._id.toString(),
+            time: l.timestamp.toLocaleTimeString(),
+            type: l.type,
+            message: l.message
+        }));
         // Convert DB trades to UI format
         const historyUI = tradeHistory.map((t) => ({
             ...t,
@@ -229,8 +249,8 @@ app.get('/api/bot/status/:userId', async (req, res) => {
             id: t._id.toString()
         }));
         res.json({
-            isRunning: engine ? engine.isRunning : false,
-            logs: engine ? engine.getLogs() : [],
+            isRunning: engine ? engine.isRunning : (user?.isBotRunning || false),
+            logs: formattedLogs,
             history: historyUI,
             stats: user?.stats || null
         });
@@ -328,15 +348,20 @@ async function restoreBots() {
         console.log(`Found ${activeUsers.length} bots to restore.`);
         for (const user of activeUsers) {
             if (user.activeBotConfig && user.proxyWallet) {
+                // Smart Restore: Check last trade time to ensure no gap in data monitoring
+                const lastTrade = await Trade.findOne({ userId: user.address }).sort({ timestamp: -1 });
+                // If we have history, resume from 1 second after last trade.
+                // If no history, assume fresh start (or cap lookup to 1 hour ago)
+                const lastTime = lastTrade ? Math.floor(lastTrade.timestamp.getTime() / 1000) + 1 : Math.floor(Date.now() / 1000) - 3600;
                 const config = {
                     ...user.activeBotConfig,
                     walletConfig: user.proxyWallet,
                     stats: user.stats,
                     activePositions: user.activePositions,
-                    startCursor: Math.floor(Date.now() / 1000) // Reset cursor to now on restart to avoid replay
+                    startCursor: lastTime
                 };
                 await startUserBot(user.address, config);
-                console.log(`✅ Restored Bot: ${user.address}`);
+                console.log(`✅ Restored Bot: ${user.address} (Resuming from ${new Date(lastTime * 1000).toISOString()})`);
             }
         }
     }

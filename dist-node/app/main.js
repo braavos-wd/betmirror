@@ -8,6 +8,7 @@ import { NotificationService } from '../services/notification.service.js';
 import { FeeDistributorService } from '../services/fee-distributor.service.js';
 import { ConsoleLogger } from '../utils/logger.util.js';
 import { getUsdBalanceApprox, getPolBalance } from '../utils/get-balance.util.js';
+import { AlphaRegistryService } from '../services/alpha-registry.service.js';
 async function main() {
     const logger = new ConsoleLogger();
     const env = loadEnv();
@@ -40,8 +41,10 @@ async function main() {
         destinationAddress: env.mainWalletAddress,
         usdcContractAddress: env.usdcContractAddress
     };
+    // For CLI, we use the HTTP Registry Service to talk to the Global Registry
+    const registryService = new AlphaRegistryService(env.registryApiUrl);
     const fundManager = new FundManagerService(client.wallet, fundManagerConfig, logger, notifier);
-    const feeDistributor = new FeeDistributorService(client.wallet, env, logger);
+    const feeDistributor = new FeeDistributorService(client.wallet, env, logger, registryService);
     try {
         const polBalance = await getPolBalance(client.wallet);
         const usdcBalance = await getUsdBalanceApprox(client.wallet, env.usdcContractAddress);

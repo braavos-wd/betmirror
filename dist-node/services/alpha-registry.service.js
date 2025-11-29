@@ -1,7 +1,7 @@
 import axios from 'axios';
 /**
- * Client-side service to talk to the Global Registry API.
- * Uses relative paths by default to support production deployments where frontend and backend share a domain.
+ * Client-side/CLI service to talk to the Global Registry API via HTTP.
+ * Used when no direct DB access is available (e.g. Browser or Headless CLI).
  */
 export class AlphaRegistryService {
     constructor(apiUrl) {
@@ -45,4 +45,5 @@ export class AlphaRegistryService {
         }
     }
 }
+// Default export for backward compatibility if needed, but preferred to instantiate
 export const alphaRegistry = new AlphaRegistryService();

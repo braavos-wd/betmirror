@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import axios from 'axios';
@@ -301,7 +302,7 @@ const App = () => {
         try {
             const res = await axios.get(`/api/bot/status/${userAddress}`);
             setIsRunning(res.data.isRunning);
-            if (res.data.logs) setLogs(res.data.logs);
+            if (res.data.logs) setLogs(res.data.logs); // Now fetches from DB
             if (res.data.history) setHistory(res.data.history);
             if (res.data.stats) setStats(res.data.stats);
 
@@ -384,7 +385,9 @@ const App = () => {
   // --- HANDLERS: Auth ---
   const handleConnect = async () => {
       try {
+          // Connects and auto-switches to Polygon if needed
           const addr = await web3Service.connect();
+          
           setUserAddress(addr);
           setConfig(prev => ({...prev, coldWalletAddress: prev.coldWalletAddress || addr })); 
           
@@ -403,7 +406,7 @@ const App = () => {
               setIsConnected(true);
           }
       } catch (e: any) {
-          alert(e.message || "Failed to connect");
+          alert(e.message || "Failed to connect. Please ensure you have a wallet installed.");
       }
   };
 
@@ -411,6 +414,9 @@ const App = () => {
   const handleActivateSmartAccount = async () => {
      setIsActivating(true);
      try {
+         // CRITICAL FIX: Ensure chain is Polygon before interaction
+         await web3Service.switchToChain(137);
+
          const walletClient = await web3Service.getViemWalletClient();
          
          // 1. Create Session Key Client Side
@@ -430,7 +436,12 @@ const App = () => {
 
      } catch (e: any) {
          console.error(e);
-         alert("Activation failed: " + e.message);
+         // Nicer error handling for chain mismatch
+         if(e.message?.includes('Chain')) {
+             alert("Activation Failed: Please switch your wallet network to Polygon (Matic) Mainnet.");
+         } else {
+             alert("Activation failed: " + e.message);
+         }
      } finally {
          setIsActivating(false);
      }
@@ -438,11 +449,16 @@ const App = () => {
 
   // --- HANDLERS: Money & Bridge ---
   const handleDepositClick = async () => {
-      if (chainId !== 137) {
+      // Refresh current chain ID
+      const provider = new BrowserProvider((window as any).ethereum);
+      const network = await provider.getNetwork();
+      const currentChain = Number(network.chainId);
+
+      if (currentChain !== 137) {
           // If not on Polygon, suggest Bridging
-          const confirmBridge = confirm(`You are connected to Chain ID ${chainId} (Not Polygon).\n\nDo you want to BRIDGE funds to your bot?`);
+          const confirmBridge = confirm(`You are connected to Chain ID ${currentChain} (Not Polygon).\n\nDo you want to BRIDGE funds to your bot?`);
           if (confirmBridge) {
-              setBridgeFromChain(chainId); // Auto set source
+              setBridgeFromChain(currentChain); // Auto set source
               setActiveTab('bridge');
               return;
           }
@@ -516,6 +532,9 @@ const App = () => {
       setIsWithdrawing(true);
 
       try {
+         // Auto-switch to Polygon required for managing the Kernel account
+         await web3Service.switchToChain(137);
+
          const walletClient = await web3Service.getViemWalletClient();
          // In a real scenario, fetch exact balance first
          const withdrawAmount = parseUnits("1000", 6); 
@@ -683,7 +702,7 @@ const App = () => {
                       {isActivating ? <RefreshCw className="animate-spin" /> : <Rocket size={20} />}
                       {isActivating ? 'DEPLOYING SMART ACCOUNT...' : 'CREATE SMART ACCOUNT'}
                   </button>
-                  <p className="text-center text-[10px] text-gray-500">By clicking Create, you sign a Session Key transaction.</p>
+                  <p className="text-center text-[10px] text-gray-500">By clicking Create, you sign a Session Key transaction. <br/>Note: You must be on Polygon Mainnet.</p>
               </div>
           </div>
       );
@@ -702,13 +721,7 @@ const App = () => {
                 </div>
                 <div>
                     <h1 className="font-bold text-gray-900 dark:text-white tracking-tight leading-none">
-                        <span className="text-blue-600">BET</span>
-                        <span className="relative inline-block">
-                            MIRROR
-                            <span className="absolute left-0 top-full w-full text-center [transform:rotateX(180deg)] scale-y-0.5 origin-top opacity-50 [background:linear-gradient(to top, rgba(0,0,0,0.8), transparent)] bg-clip-text text-transparent">
-                                MIRROR
-                            </span>
-                        </span>
+                        <span className="text-blue-600">BET</span> MIRROR
                     </h1>
                     <span className="text-[10px] text-gray-500 font-mono tracking-widest uppercase">TERMINAL</span>
                 </div>
@@ -740,6 +753,16 @@ const App = () => {
             </nav>
 
             <div className="flex items-center gap-4">
+                 {/* Chain Indicator */}
+                 {chainId !== 137 && (
+                     <button 
+                        onClick={() => web3Service.switchToChain(137)}
+                        className="hidden md:flex items-center gap-2 px-3 py-1 bg-yellow-100 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-500 rounded text-xs font-bold border border-yellow-200 dark:border-yellow-700/30"
+                     >
+                         <AlertTriangle size={12}/> WRONG NETWORK
+                     </button>
+                 )}
+
                  {/* Theme Toggle */}
                  <button onClick={toggleTheme} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-white/10 text-gray-600 dark:text-gray-400 transition-colors">
                      {theme === 'light' ? <Moon size={16}/> : <Sun size={16}/>}

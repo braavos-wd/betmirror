@@ -24,39 +24,55 @@ export class Web3Service {
     await this.provider.send("eth_requestAccounts", []);
     this.signer = await this.provider.getSigner();
     
+    // Auto-switch to Polygon on connect for best UX
+    await this.switchToChain(137);
+
     return await this.signer.getAddress();
   }
 
   /**
    * Returns a Viem Wallet Client (Required for ZeroDev / AA)
+   * Automatically enforces the correct chain context.
    */
   async getViemWalletClient(): Promise<WalletClient> {
-      if (!this.viemClient) {
-          if (!(window as any).ethereum) throw new Error("No Wallet");
-          const [account] = await (window as any).ethereum.request({ method: 'eth_requestAccounts' });
+      if (!(window as any).ethereum) throw new Error("No Wallet");
+
+      // Ensure we are on the correct chain (Polygon) before returning the client
+      // This prevents the "Provider is not connected to the requested chain" error
+      await this.switchToChain(137);
+      
+      const [account] = await (window as any).ethereum.request({ method: 'eth_requestAccounts' });
           
-          this.viemClient = createWalletClient({
-            account,
-            chain: polygon, // Default to Polygon for AA setup
-            transport: custom((window as any).ethereum)
-          });
-      }
+      // Always recreate the client to ensure it binds to the freshly switched provider context
+      this.viemClient = createWalletClient({
+        account,
+        chain: polygon, // ZeroDev expects Polygon
+        transport: custom((window as any).ethereum)
+      });
+      
       return this.viemClient;
   }
 
   async switchToChain(chainId: number) {
-      if(!this.provider) await this.connect();
+      if(!this.provider) {
+          this.provider = new BrowserProvider((window as any).ethereum as Eip1193Provider);
+      }
+      
       const hexChainId = "0x" + chainId.toString(16);
       
       try {
           await this.provider!.send("wallet_switchEthereumChain", [{ chainId: hexChainId }]);
       } catch (switchError: any) {
           // Error 4902: Chain not added. Add it.
-          if (switchError.code === 4902) {
+          if (switchError.code === 4902 || switchError.code === -32603 || switchError.message?.includes("Unrecognized chain")) {
              const chainConfig = this.getChainConfig(chainId);
              if(chainConfig) {
                  await this.provider!.send("wallet_addEthereumChain", [chainConfig]);
+             } else {
+                 throw new Error(`Chain ID ${chainId} configuration not found.`);
              }
+          } else {
+              throw switchError;
           }
       }
   }
@@ -65,6 +81,9 @@ export class Web3Service {
       if (!this.signer) await this.connect();
       // Ensure we are on Polygon for direct deposit
       await this.switchToChain(137);
+      
+      // Refresh signer after switch to avoid "underlying network changed" errors
+      this.signer = await this.provider?.getSigner();
 
       const usdc = new Contract(USDC_POLYGON, USDC_ABI, this.signer);
       const decimals = await usdc.decimals();
@@ -80,7 +99,7 @@ export class Web3Service {
       if (chainId === 137) return {
           chainId: "0x89",
           chainName: "Polygon Mainnet",
-          nativeCurrency: { name: "MATIC", symbol: "MATIC", decimals: 18 },
+          nativeCurrency: { name: "POL", symbol: "POL", decimals: 18 },
           rpcUrls: ["https://polygon-rpc.com/"],
           blockExplorerUrls: ["https://polygonscan.com/"]
       };

@@ -7,6 +7,7 @@ import { FeeDistributorService } from '../services/fee-distributor.service.js';
 import { ZeroDevService } from '../services/zerodev.service.js';
 import { ClobClient, Chain } from '@polymarket/clob-client';
 import { Wallet, AbstractSigner, JsonRpcProvider } from 'ethers';
+import { BotLog } from '../database/index.js';
 // --- ADAPTER: ZeroDev (Viem) -> Ethers.js Signer ---
 class KernelEthersSigner extends AbstractSigner {
     constructor(kernelClient, address, provider) {
@@ -50,12 +51,13 @@ class KernelEthersSigner extends AbstractSigner {
     }
 }
 export class BotEngine {
-    constructor(config, callbacks) {
+    constructor(config, registryService, callbacks) {
         this.config = config;
+        this.registryService = registryService;
         this.callbacks = callbacks;
         this.isRunning = false;
+        // Use in-memory logs only as a buffer/cache if needed, but primary source is DB
         this.logs = [];
-        // History is now primarily stored in DB, we only keep recent logs here if needed
         this.activePositions = [];
         this.stats = {
             totalPnl: 0,
@@ -71,10 +73,13 @@ export class BotEngine {
         if (config.stats) {
             this.stats = config.stats;
         }
+        // Log initial wakeup
+        this.addLog('info', 'Bot Engine Initialized');
     }
-    getLogs() { return this.logs; }
     getStats() { return this.stats; }
-    addLog(type, message) {
+    // Async log writing to DB
+    async addLog(type, message) {
+        // 1. Write to memory (for immediate polling before DB confirms)
         const log = {
             id: Math.random().toString(36) + Date.now(),
             time: new Date().toLocaleTimeString(),
@@ -82,26 +87,15 @@ export class BotEngine {
             message
         };
         this.logs.unshift(log);
-        if (this.logs.length > 200)
+        if (this.logs.length > 50)
             this.logs.pop();
-    }
-    async recordTrade(entry) {
-        const historyItem = {
-            id: Math.random().toString(36).substr(2, 9),
-            timestamp: new Date().toISOString(),
-            ...entry
-        };
-        if (entry.status !== 'SKIPPED') {
-            this.stats.tradesCount++;
-            this.stats.totalVolume += entry.size;
-            if (entry.pnl) {
-                this.stats.totalPnl += entry.pnl;
-            }
-        }
-        if (this.callbacks?.onTradeComplete)
-            await this.callbacks.onTradeComplete(historyItem);
-        if (this.callbacks?.onStatsUpdate)
-            await this.callbacks.onStatsUpdate(this.stats);
+        // 2. Write to MongoDB (Fire and Forget)
+        BotLog.create({
+            userId: this.config.userId,
+            type,
+            message,
+            timestamp: new Date()
+        }).catch(e => console.error("Failed to persist log", e));
     }
     async revokePermissions() {
         if (this.executor) {
@@ -115,7 +109,7 @@ export class BotEngine {
             return;
         try {
             this.isRunning = true;
-            this.addLog('info', 'Starting Server-Side Bot Engine...');
+            await this.addLog('info', 'Starting Server-Side Bot Engine...');
             const logger = {
                 info: (msg) => { console.log(`[${this.config.userId}] ${msg}`); this.addLog('info', msg); },
                 warn: (msg) => { console.warn(`[${this.config.userId}] ${msg}`); this.addLog('warn', msg); },
@@ -130,7 +124,6 @@ export class BotEngine {
                 enableNotifications: this.config.enableNotifications,
                 adminRevenueWallet: process.env.ADMIN_REVENUE_WALLET || '0x0000000000000000000000000000000000000000',
                 usdcContractAddress: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
-                registryApiUrl: this.config.registryApiUrl || 'http://localhost:3000/api'
             };
             // --- ACCOUNT STRATEGY SELECTION ---
             let signerImpl;
@@ -138,18 +131,18 @@ export class BotEngine {
             let clobCreds = undefined;
             // 1. Smart Account Strategy
             if (this.config.walletConfig?.type === 'SMART_ACCOUNT' && this.config.walletConfig.serializedSessionKey) {
-                this.addLog('info', '🔐 Initializing ZeroDev Smart Account Session...');
+                await this.addLog('info', '🔐 Initializing ZeroDev Smart Account Session...');
                 const aaService = new ZeroDevService(this.config.zeroDevRpc || 'https://rpc.zerodev.app/api/v2/bundler/DEFAULT');
                 const { address, client: kernelClient } = await aaService.createBotClient(this.config.walletConfig.serializedSessionKey);
                 walletAddress = address;
-                this.addLog('success', `Smart Account Active: ${walletAddress.slice(0, 6)}... (Session Key)`);
+                await this.addLog('success', `Smart Account Active: ${walletAddress.slice(0, 6)}... (Session Key)`);
                 const provider = new JsonRpcProvider(this.config.rpcUrl);
                 signerImpl = new KernelEthersSigner(kernelClient, address, provider);
                 clobCreds = undefined;
             }
             else {
                 // 2. Legacy EOA Strategy
-                this.addLog('info', 'Using Standard EOA Wallet');
+                await this.addLog('info', 'Using Standard EOA Wallet');
                 const activeKey = this.config.privateKey || this.config.walletConfig?.sessionPrivateKey;
                 if (!activeKey)
                     throw new Error("No valid signing key found for EOA.");
@@ -157,7 +150,7 @@ export class BotEngine {
                 signerImpl = new Wallet(activeKey, provider);
                 walletAddress = signerImpl.address;
                 if (this.config.polymarketApiKey && this.config.polymarketApiSecret && this.config.polymarketApiPassphrase) {
-                    this.addLog('info', '⚡ API Keys Loaded (High Performance Mode)');
+                    await this.addLog('info', '⚡ API Keys Loaded (High Performance Mode)');
                     clobCreds = {
                         key: this.config.polymarketApiKey,
                         secret: this.config.polymarketApiSecret,
@@ -168,7 +161,7 @@ export class BotEngine {
             // Initialize Polymarket Client
             const clobClient = new ClobClient('https://clob.polymarket.com', Chain.POLYGON, signerImpl, clobCreds);
             this.client = Object.assign(clobClient, { wallet: signerImpl });
-            this.addLog('success', `Bot Online: ${walletAddress.slice(0, 6)}...`);
+            await this.addLog('success', `Bot Online: ${walletAddress.slice(0, 6)}...`);
             const notifier = new NotificationService(env, logger);
             const fundManagerConfig = {
                 enabled: this.config.autoCashout?.enabled || false,
@@ -177,14 +170,14 @@ export class BotEngine {
                 usdcContractAddress: env.usdcContractAddress
             };
             const fundManager = new FundManagerService(this.client.wallet, fundManagerConfig, logger, notifier);
-            const feeDistributor = new FeeDistributorService(this.client.wallet, env, logger);
+            const feeDistributor = new FeeDistributorService(this.client.wallet, env, logger, this.registryService);
             this.executor = new TradeExecutorService({
                 client: this.client,
                 proxyWallet: walletAddress,
                 env,
                 logger
             });
-            this.addLog('info', 'Checking Token Allowances...');
+            await this.addLog('info', 'Checking Token Allowances...');
             const approved = await this.executor.ensureAllowance();
             this.stats.allowanceApproved = approved;
             try {
@@ -204,18 +197,18 @@ export class BotEngine {
                     let aiReasoning = "Legacy Mode (No AI Key)";
                     let riskScore = 5;
                     if (this.config.geminiApiKey && this.config.geminiApiKey.length > 10) {
-                        this.addLog('info', '🤖 AI Analyzing signal...');
+                        await this.addLog('info', '🤖 AI Analyzing signal...');
                         const analysis = await aiAgent.analyzeTrade(`Market: ${signal.marketId}`, signal.side, signal.outcome, signal.sizeUsd, signal.price, this.config.geminiApiKey, this.config.riskProfile);
                         shouldExecute = analysis.shouldCopy;
                         aiReasoning = analysis.reasoning;
                         riskScore = analysis.riskScore;
                     }
                     if (shouldExecute) {
-                        this.addLog('info', `Executing Copy: ${signal.side} ${signal.outcome}`);
+                        await this.addLog('info', `Executing Copy: ${signal.side} ${signal.outcome}`);
                         try {
                             if (this.executor)
                                 await this.executor.copyTrade(signal);
-                            this.addLog('success', `Trade Executed Successfully!`);
+                            await this.addLog('success', `Trade Executed Successfully!`);
                             let realPnl = 0;
                             if (signal.side === 'BUY') {
                                 const newPosition = {
@@ -234,11 +227,11 @@ export class BotEngine {
                                     const entry = this.activePositions[posIndex];
                                     const yieldPercent = (signal.price - entry.entryPrice) / entry.entryPrice;
                                     realPnl = signal.sizeUsd * yieldPercent;
-                                    this.addLog('info', `Realized PnL: $${realPnl.toFixed(2)} (${(yieldPercent * 100).toFixed(1)}%)`);
+                                    await this.addLog('info', `Realized PnL: $${realPnl.toFixed(2)} (${(yieldPercent * 100).toFixed(1)}%)`);
                                     this.activePositions.splice(posIndex, 1);
                                 }
                                 else {
-                                    this.addLog('warn', `Closing tracked position (Entry lost or manual). PnL set to 0.`);
+                                    await this.addLog('warn', `Closing tracked position (Entry lost or manual). PnL set to 0.`);
                                     realPnl = 0;
                                 }
                             }
@@ -277,7 +270,7 @@ export class BotEngine {
                             }, 15000);
                         }
                         catch (err) {
-                            this.addLog('error', `Execution Failed: ${err.message}`);
+                            await this.addLog('error', `Execution Failed: ${err.message}`);
                         }
                     }
                     else {
@@ -299,11 +292,11 @@ export class BotEngine {
             await this.monitor.start(this.config.startCursor);
             // Watchdog for Auto-Take Profit
             this.watchdogTimer = setInterval(() => this.checkAutoTp(), 10000);
-            this.addLog('success', 'Bot Engine Active & Monitoring 24/7');
+            await this.addLog('success', 'Bot Engine Active & Monitoring 24/7');
         }
         catch (e) {
             this.isRunning = false;
-            this.addLog('error', `Startup Failed: ${e.message}`);
+            await this.addLog('error', `Startup Failed: ${e.message}`);
         }
     }
     async checkAutoTp() {
@@ -317,7 +310,7 @@ export class BotEngine {
                     const bestBid = parseFloat(orderBook.bids[0].price);
                     const gainPercent = ((bestBid - pos.entryPrice) / pos.entryPrice) * 100;
                     if (gainPercent >= this.config.autoTp) {
-                        this.addLog('success', `🎯 Auto TP Hit! ${pos.outcome} is up +${gainPercent.toFixed(1)}%`);
+                        await this.addLog('success', `🎯 Auto TP Hit! ${pos.outcome} is up +${gainPercent.toFixed(1)}%`);
                         const success = await this.executor.executeManualExit(pos, bestBid);
                         if (success) {
                             this.activePositions = this.activePositions.filter(p => p.tokenId !== pos.tokenId);
@@ -340,6 +333,26 @@ export class BotEngine {
                 }
             }
             catch (e) { /* silent fail */ }
+        }
+    }
+    async recordTrade(data) {
+        const entry = {
+            id: Math.random().toString(36).substring(7),
+            timestamp: new Date().toISOString(),
+            ...data
+        };
+        if (data.status !== 'SKIPPED') {
+            this.stats.tradesCount = (this.stats.tradesCount || 0) + 1;
+            this.stats.totalVolume = (this.stats.totalVolume || 0) + data.size;
+            if (data.pnl) {
+                this.stats.totalPnl = (this.stats.totalPnl || 0) + data.pnl;
+            }
+        }
+        if (this.callbacks?.onTradeComplete) {
+            await this.callbacks.onTradeComplete(entry);
+        }
+        if (data.status !== 'SKIPPED' && this.callbacks?.onStatsUpdate) {
+            await this.callbacks.onStatsUpdate(this.stats);
         }
     }
     stop() {
