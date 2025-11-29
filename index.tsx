@@ -10,7 +10,7 @@ import {
   CheckCircle2, ArrowDownCircle, ArrowUpCircle, Brain, AlertCircle, Trophy, Globe, Zap, LogOut,
   Info, HelpCircle, ChevronRight, Rocket, Gauge, MessageSquare, Star, ArrowRightLeft, LifeBuoy,
   Sun, Moon, Loader2, Timer, Fuel, Check, BarChart3, ChevronDown, MousePointerClick,
-  Zap as ZapIcon, FileText, Twitter, Github
+  Zap as ZapIcon, FileText, Twitter, Github, LockKeyhole
 } from 'lucide-react';
 import { web3Service, USDC_POLYGON, USDC_ABI } from './src/services/web3.service';
 import { lifiService, BridgeTransactionRecord } from './src/services/lifi-bridge.service';
@@ -209,6 +209,7 @@ const ActivationView = ({
     const [computedAddress, setComputedAddress] = useState<string>('');
     const [existingBalance, setExistingBalance] = useState<string>('0.00');
     const [checking, setChecking] = useState(true);
+    const [showSafetyGuide, setShowSafetyGuide] = useState(false);
 
     // Check if an account already exists on-chain for this user
     useEffect(() => {
@@ -334,12 +335,92 @@ const ActivationView = ({
                         {isActivating ? 'PROCESSING...' : (recoveryMode ? 'RESTORE SESSION' : 'CREATE SMART ACCOUNT')}
                     </span>
                 </button>
-                <p className="text-center text-[10px] text-gray-500">
-                    {recoveryMode 
-                        ? "Restoring access generates a new session key for your existing on-chain wallet." 
-                        : "By clicking Create, you sign a Session Key transaction. You must be on Polygon Mainnet."}
-                </p>
+                
+                <div className="flex flex-col items-center gap-2">
+                    <p className="text-center text-[10px] text-gray-500">
+                        {recoveryMode 
+                            ? "Restoring access generates a new session key for your existing on-chain wallet." 
+                            : "By clicking Create, you sign a Session Key transaction. You must be on Polygon Mainnet."}
+                    </p>
+                    <button 
+                        onClick={() => setShowSafetyGuide(true)} 
+                        className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 mt-1 font-medium"
+                    >
+                        <LockKeyhole size={12}/> Is my money safe? Read the Recovery Guide.
+                    </button>
+                </div>
             </div>
+
+            {/* Safety & Recovery Modal */}
+            {showSafetyGuide && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+                    <div className="bg-white dark:bg-terminal-card border border-gray-200 dark:border-terminal-border rounded-xl max-w-2xl w-full p-6 relative shadow-2xl overflow-y-auto max-h-[90vh]">
+                        <button onClick={() => setShowSafetyGuide(false)} className="absolute top-4 right-4 text-gray-500 hover:text-black dark:hover:text-white transition-colors"><X size={20}/></button>
+                        
+                        <div className="flex items-center gap-3 mb-6 pb-4 border-b border-gray-200 dark:border-gray-800">
+                            <div className="p-3 bg-green-100 dark:bg-green-900/20 rounded-full text-green-600 dark:text-green-500">
+                                <Shield size={24}/>
+                            </div>
+                            <div>
+                                <h3 className="text-xl font-bold text-gray-900 dark:text-white">Funds Safety & Recovery Guide</h3>
+                                <p className="text-xs text-gray-500">How Account Abstraction protects your assets.</p>
+                            </div>
+                        </div>
+
+                        <div className="space-y-6">
+                            {/* Scenario 1: New Device / Clear Cache */}
+                            <div className="flex gap-4">
+                                <div className="mt-1"><RefreshCw className="text-blue-500" size={20}/></div>
+                                <div>
+                                    <h4 className="text-sm font-bold text-gray-900 dark:text-white">Scenario 1: I switched devices or cleared my browser cache.</h4>
+                                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                                        <strong>You lose nothing.</strong> Your Smart Account is mathematically derived from your main wallet (Metamask/Phantom). 
+                                        Simply connect the same wallet on the new device. The system will detect your existing Smart Account on the blockchain 
+                                        and button will change to <span className="text-green-600 dark:text-green-400 font-bold">"RESTORE SESSION"</span>. 
+                                        Clicking it re-syncs your bot without touching your funds.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Scenario 2: Server Wipe */}
+                            <div className="flex gap-4">
+                                <div className="mt-1"><Server className="text-orange-500" size={20}/></div>
+                                <div>
+                                    <h4 className="text-sm font-bold text-gray-900 dark:text-white">Scenario 2: The Bot Server crashes or Database is wiped.</h4>
+                                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                                        <strong>Your funds are safe on Polygon.</strong> We do not hold your funds in our database. 
+                                        The database only stores a "Session Key" (a permission slip to trade). If the database is wiped, 
+                                        you simply click <span className="text-green-600 dark:text-green-400 font-bold">"RESTORE SESSION"</span> 
+                                        to generate a new key. Your USDC balance remains on-chain and instantly reappears.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Scenario 3: Trustless */}
+                            <div className="flex gap-4">
+                                <div className="mt-1"><Lock className="text-purple-500" size={20}/></div>
+                                <div>
+                                    <h4 className="text-sm font-bold text-gray-900 dark:text-white">Scenario 3: I want to withdraw, but the bot is offline.</h4>
+                                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                                        <strong>You are the Owner.</strong> The Smart Account belongs to you. You can trigger a "Trustless Withdrawal" 
+                                        from the dashboard at any time. This bypasses our server and talks directly to the blockchain to move funds 
+                                        back to your main wallet. We cannot stop you from withdrawing.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="mt-8 pt-4 border-t border-gray-200 dark:border-gray-800 text-center">
+                            <button 
+                                onClick={() => setShowSafetyGuide(false)}
+                                className="px-6 py-2 bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 text-gray-900 dark:text-white text-sm font-bold rounded-lg transition-colors"
+                            >
+                                I Understand, Let's Go
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
