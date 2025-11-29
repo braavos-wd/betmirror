@@ -217,6 +217,7 @@ const ActivationView = ({
         setChecking(true);
         setScanError('');
         setComputedAddress('');
+        setRecoveryMode(false);
 
         try {
             // 1. Force Check Chain
@@ -237,21 +238,34 @@ const ActivationView = ({
             
             if (address) {
                 setComputedAddress(address);
-                // 3. Check balance (optional, just for display)
-                try {
-                    const polyProvider = new JsonRpcProvider('https://polygon-rpc.com');
-                    const usdcContract = new Contract(USDC_POLYGON, USDC_ABI, polyProvider);
-                    const bal = await usdcContract.balanceOf(address);
-                    const formatted = formatUnits(bal, 6);
-                    setExistingBalance(formatted);
-                } catch (e) {
-                    console.warn("Failed to check balance:", e);
-                    setExistingBalance('0.00');
-                }
                 
-                // CRITICAL: We always enable recovery mode if address is found, 
-                // because the account exists on-chain even if balance is 0.
-                setRecoveryMode(true);
+                // 3. LIVENESS CHECK
+                // Just because we computed an address doesn't mean it "Exists" effectively.
+                // We check if it has code (is deployed) OR has money.
+                const polyProvider = new JsonRpcProvider('https://polygon-rpc.com');
+                const [code, nativeBal, usdcBal] = await Promise.all([
+                    polyProvider.getCode(address),
+                    polyProvider.getBalance(address),
+                    (async () => {
+                        try {
+                            const usdcContract = new Contract(USDC_POLYGON, USDC_ABI, polyProvider);
+                            return await usdcContract.balanceOf(address);
+                        } catch { return BigInt(0); }
+                    })()
+                ]);
+
+                const formattedUsdc = formatUnits(usdcBal, 6);
+                setExistingBalance(formattedUsdc);
+
+                const isDeployed = code !== '0x';
+                const hasFunds = nativeBal > BigInt(0) || usdcBal > BigInt(0);
+
+                if (isDeployed || hasFunds) {
+                    setRecoveryMode(true); // Account is real
+                } else {
+                    setRecoveryMode(false); // Account is theoretical (Fresh)
+                }
+
             } else {
                 setScanError("Could not calculate Smart Account address. RPC Error?");
             }
@@ -314,11 +328,13 @@ const ActivationView = ({
                 )}
 
                 {/* --- Found Account Display --- */}
-                {recoveryMode && (
-                    <div className="p-4 bg-green-50 dark:bg-green-900/10 rounded-lg border border-green-200 dark:border-green-500/20 animate-in fade-in zoom-in duration-300">
+                {computedAddress && (
+                    <div className={`p-4 rounded-lg border animate-in fade-in zoom-in duration-300 ${recoveryMode ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-500/20' : 'bg-gray-50 dark:bg-white/5 border-gray-200 dark:border-white/10'}`}>
                         <div className="flex justify-between items-center mb-2">
-                            <span className="text-xs font-bold text-green-800 dark:text-green-400 uppercase tracking-wider flex items-center gap-1"><CheckCircle2 size={12}/> Account Found</span>
-                            <span className="bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200 text-[10px] px-2 py-0.5 rounded font-mono font-bold">READY</span>
+                            <span className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1 ${recoveryMode ? 'text-green-800 dark:text-green-400' : 'text-gray-500'}`}>
+                                {recoveryMode ? <><CheckCircle2 size={12}/> Account Found</> : "Your Future Bot Address"}
+                            </span>
+                            {recoveryMode && <span className="bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200 text-[10px] px-2 py-0.5 rounded font-mono font-bold">READY</span>}
                         </div>
                         <div className="flex justify-between text-sm items-center">
                             <span className="text-gray-600 dark:text-gray-300 font-mono text-xs bg-white dark:bg-black/20 px-2 py-1 rounded select-all">{computedAddress}</span>
@@ -367,7 +383,7 @@ const ActivationView = ({
                 )}
 
                 {/* --- Manual Scan Button (If nothing found yet and no error) --- */}
-                {!recoveryMode && !checking && !scanError && (
+                {!computedAddress && !checking && !scanError && (
                     <div className="flex justify-center">
                         <button onClick={scanBlockchain} className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1">
                             <Search size={12}/> {chainId === 137 ? "Re-scan for account" : "Connect to Polygon & Scan"}
@@ -378,7 +394,7 @@ const ActivationView = ({
                 {/* --- Main Action Button --- */}
                 <button 
                     onClick={handleActivate}
-                    disabled={isActivating || checking || (chainId !== 137 && !recoveryMode)}
+                    disabled={isActivating || checking || (chainId !== 137 && computedAddress === '')}
                     className={`w-full py-3 px-2 sm:py-4 text-white font-bold rounded-xl hover:opacity-90 transition-all flex items-center justify-center gap-2 sm:gap-3 shadow-lg text-sm sm:text-base ${
                         recoveryMode 
                         ? 'bg-gradient-to-r from-green-600 to-green-500 shadow-green-500/20' 
