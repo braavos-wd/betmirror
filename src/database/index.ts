@@ -173,6 +173,26 @@ export const connectDB = async (uri: string) => {
     console.log(`🔌 Attempting to connect to MongoDB...`);
     
     await mongoose.connect(uri);
+
+    // --- FIX: Drop Legacy Index ---
+    // The error 'E11000 ... index: handle_1 dup key: { handle: null }' happens because
+    // an old index exists on 'handle' but our schema doesn't use it, causing all new users
+    // to default to null, which violates uniqueness. We drop it here.
+    try {
+        if (mongoose.connection.db) {
+            const indexName = 'handle_1';
+            const indexExists = await mongoose.connection.db.collection('users').indexExists(indexName);
+            if (indexExists) {
+                await mongoose.connection.db.collection('users').dropIndex(indexName);
+                console.log('🧹 Cleaned up legacy index: handle_1 (Fixed Activation Error)');
+            }
+        }
+    } catch (e: any) {
+        // Ignore if index doesn't exist or other non-critical error
+        if (e.code !== 27) { 
+            console.warn('⚠️ Index cleanup check:', e.message);
+        }
+    }
     
     console.log(`📦 Connected to MongoDB successfully (${uri.includes('mongodb.net') ? 'Atlas Cloud' : 'Local'})`);
   } catch (error) {

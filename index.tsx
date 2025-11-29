@@ -195,6 +195,155 @@ const BridgeStepper = ({ status }: { status: string }) => {
     );
 };
 
+// --- Component: Activation View ---
+const ActivationView = ({ 
+    needsActivation, 
+    handleActivate, 
+    isActivating, 
+    chainId, 
+    userAddress, 
+    theme, 
+    toggleTheme 
+}: any) => {
+    const [recoveryMode, setRecoveryMode] = useState(false);
+    const [computedAddress, setComputedAddress] = useState<string>('');
+    const [existingBalance, setExistingBalance] = useState<string>('0.00');
+    const [checking, setChecking] = useState(true);
+
+    // Check if an account already exists on-chain for this user
+    useEffect(() => {
+        const checkExisting = async () => {
+            if (!userAddress || chainId !== 137) {
+                setChecking(false);
+                return;
+            }
+            
+            try {
+                // 1. Compute deterministic address
+                const walletClient = await web3Service.getViemWalletClient(137);
+                const address = await zeroDevService.computeMasterAccountAddress(walletClient);
+                
+                if (address) {
+                    setComputedAddress(address);
+                    // 2. Check balance
+                    const polyProvider = new JsonRpcProvider('https://polygon-rpc.com');
+                    const usdcContract = new Contract(USDC_POLYGON, USDC_ABI, polyProvider);
+                    const bal = await usdcContract.balanceOf(address);
+                    const formatted = formatUnits(bal, 6);
+                    
+                    if (parseFloat(formatted) > 0) {
+                        setExistingBalance(formatted);
+                        setRecoveryMode(true);
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to check existing account", e);
+            } finally {
+                setChecking(false);
+            }
+        };
+        checkExisting();
+    }, [userAddress, chainId]);
+
+    return (
+        <div className="min-h-screen bg-white dark:bg-[#050505] flex flex-col items-center justify-center text-gray-900 dark:text-white p-4 transition-colors duration-200">
+            <div className="absolute top-6 right-6">
+                <button onClick={toggleTheme} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-white/10 text-gray-600 dark:text-gray-400 transition-colors">
+                   {theme === 'light' ? <Moon size={20}/> : <Sun size={20}/>}
+                </button>
+            </div>
+
+            <div className="max-w-xl w-full bg-white dark:bg-terminal-card border border-gray-200 dark:border-terminal-border rounded-xl p-8 space-y-6 relative overflow-hidden shadow-2xl">
+                <div className="absolute top-0 right-0 p-8 opacity-5 text-blue-600">
+                    <Shield size={120} />
+                </div>
+                
+                <div className="flex items-center gap-4">
+                    <div className={`p-4 rounded-xl border ${recoveryMode ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-500/30' : 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-500/30'}`}>
+                        {recoveryMode ? <RefreshCw size={32} className="text-green-600 dark:text-green-400" /> : <Zap size={32} className="text-blue-600 dark:text-blue-400" />}
+                    </div>
+                    <div>
+                        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+                            {recoveryMode ? 'Restore Smart Session' : 'Activate Smart Bot'}
+                        </h2>
+                        <p className="text-gray-500">
+                            {recoveryMode ? 'Existing account detected. Re-establishing connection.' : 'Set up your non-custodial trading account.'}
+                        </p>
+                    </div>
+                </div>
+
+                {checking && (
+                    <div className="flex items-center gap-2 text-xs text-gray-500 animate-pulse">
+                        <Loader2 size={12} className="animate-spin"/> Checking chain for existing history...
+                    </div>
+                )}
+
+                {recoveryMode && (
+                    <div className="p-4 bg-green-50 dark:bg-green-900/10 rounded-lg border border-green-200 dark:border-green-500/20">
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-xs font-bold text-green-800 dark:text-green-400 uppercase tracking-wider">Account Found</span>
+                            <span className="bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200 text-[10px] px-2 py-0.5 rounded font-mono font-bold">ACTIVE</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                            <span className="text-gray-600 dark:text-gray-300 font-mono text-xs">{computedAddress}</span>
+                            <span className="font-bold text-gray-900 dark:text-white">${existingBalance} USDC</span>
+                        </div>
+                    </div>
+                )}
+
+                <div className="space-y-4">
+                    <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/5">
+                        <CheckCircle2 size={16} className="text-green-500 mt-1" />
+                        <div>
+                            <span className="text-sm font-bold text-gray-900 dark:text-white">Non-Custodial Security</span>
+                            <p className="text-xs text-gray-500">You hold the admin keys. We only get trade permissions.</p>
+                        </div>
+                    </div>
+                    <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/5">
+                        <CheckCircle2 size={16} className="text-green-500 mt-1" />
+                        <div>
+                            <span className="text-sm font-bold text-gray-900 dark:text-white">Gas Abstraction</span>
+                            <p className="text-xs text-gray-500">ZeroDev Smart Accounts handle gas optimization.</p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Network Warning for Activation */}
+                {chainId !== 137 && (
+                    <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-700/50 flex gap-2 items-center">
+                        <AlertTriangle size={16} className="text-yellow-600 dark:text-yellow-500"/>
+                        <p className="text-xs text-yellow-700 dark:text-yellow-400 font-bold">Wrong Network: We will attempt to switch you to Polygon automatically.</p>
+                    </div>
+                )}
+
+                <button 
+                    onClick={handleActivate}
+                    disabled={isActivating || checking}
+                    className={`w-full py-3 px-2 sm:py-4 text-white font-bold rounded-xl hover:opacity-90 transition-all flex items-center justify-center gap-2 sm:gap-3 shadow-lg text-sm sm:text-base ${
+                        recoveryMode 
+                        ? 'bg-gradient-to-r from-green-600 to-green-500 shadow-green-500/20' 
+                        : 'bg-gradient-to-r from-blue-600 to-blue-500 shadow-blue-500/20'
+                    }`}
+                >
+                    {isActivating ? (
+                        <RefreshCw className="animate-spin flex-shrink-0" size={18} />
+                    ) : (
+                        recoveryMode ? <RefreshCw className="flex-shrink-0" size={18}/> : <Rocket className="flex-shrink-0" size={18} />
+                    )}
+                    <span className="whitespace-nowrap overflow-hidden text-ellipsis">
+                        {isActivating ? 'PROCESSING...' : (recoveryMode ? 'RESTORE SESSION' : 'CREATE SMART ACCOUNT')}
+                    </span>
+                </button>
+                <p className="text-center text-[10px] text-gray-500">
+                    {recoveryMode 
+                        ? "Restoring access generates a new session key for your existing on-chain wallet." 
+                        : "By clicking Create, you sign a Session Key transaction. You must be on Polygon Mainnet."}
+                </p>
+            </div>
+        </div>
+    );
+};
+
 const App = () => {
   // --- STATE: Web3 & Session ---
   const [isConnected, setIsConnected] = useState(false);
@@ -430,7 +579,7 @@ const App = () => {
          setProxyAddress(res.data.address);
          setProxyType('SMART_ACCOUNT');
          setNeedsActivation(false);
-         alert("✅ Smart Account Activated! You can now deposit funds.");
+         alert("✅ Smart Account Active! You can now deposit funds.");
 
      } catch (e: any) {
          console.error(e);
@@ -680,71 +829,15 @@ const App = () => {
   // --- VIEW: ACTIVATION (Account Abstraction) ---
   if (needsActivation) {
       return (
-          <div className="min-h-screen bg-white dark:bg-[#050505] flex flex-col items-center justify-center text-gray-900 dark:text-white p-4 transition-colors duration-200">
-              {/* Theme Toggle */}
-              <div className="absolute top-6 right-6">
-                  <button onClick={toggleTheme} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-white/10 text-gray-600 dark:text-gray-400 transition-colors">
-                     {theme === 'light' ? <Moon size={20}/> : <Sun size={20}/>}
-                  </button>
-              </div>
-
-              <div className="max-w-xl w-full bg-white dark:bg-terminal-card border border-gray-200 dark:border-terminal-border rounded-xl p-8 space-y-6 relative overflow-hidden shadow-2xl">
-                  <div className="absolute top-0 right-0 p-8 opacity-5 text-blue-600">
-                      <Shield size={120} />
-                  </div>
-                  
-                  <div className="flex items-center gap-4">
-                      <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-200 dark:border-blue-500/30">
-                          <Zap size={32} className="text-blue-600 dark:text-blue-400" />
-                      </div>
-                      <div>
-                          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Activate Smart Bot</h2>
-                          <p className="text-gray-500">Set up your non-custodial trading account.</p>
-                      </div>
-                  </div>
-
-                  <div className="space-y-4">
-                      <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/5">
-                          <CheckCircle2 size={16} className="text-green-500 mt-1" />
-                          <div>
-                              <span className="text-sm font-bold text-gray-900 dark:text-white">Non-Custodial Security</span>
-                              <p className="text-xs text-gray-500">You hold the admin keys. We only get trade permissions.</p>
-                          </div>
-                      </div>
-                      <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-white/5 rounded-lg border border-gray-200 dark:border-white/5">
-                          <CheckCircle2 size={16} className="text-green-500 mt-1" />
-                          <div>
-                              <span className="text-sm font-bold text-gray-900 dark:text-white">Gas Abstraction</span>
-                              <p className="text-xs text-gray-500">ZeroDev Smart Accounts handle gas optimization.</p>
-                          </div>
-                      </div>
-                  </div>
-
-                  {/* Network Warning for Activation */}
-                  {chainId !== 137 && (
-                      <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-700/50 flex gap-2 items-center">
-                          <AlertTriangle size={16} className="text-yellow-600 dark:text-yellow-500"/>
-                          <p className="text-xs text-yellow-700 dark:text-yellow-400 font-bold">Wrong Network: We will attempt to switch you to Polygon automatically.</p>
-                      </div>
-                  )}
-
-                  <button 
-                      onClick={handleActivateSmartAccount}
-                      disabled={isActivating}
-                      className="w-full py-3 px-2 sm:py-4 bg-gradient-to-r from-blue-600 to-blue-500 text-white font-bold rounded-xl hover:opacity-90 transition-all flex items-center justify-center gap-2 sm:gap-3 shadow-lg shadow-blue-500/20 text-sm sm:text-base"
-                  >
-                      {isActivating ? (
-                          <RefreshCw className="animate-spin flex-shrink-0" size={18} />
-                      ) : (
-                          <Rocket className="flex-shrink-0" size={18} />
-                      )}
-                      <span className="whitespace-nowrap overflow-hidden text-ellipsis">
-                          {isActivating ? 'DEPLOYING...' : 'CREATE SMART ACCOUNT'}
-                      </span>
-                  </button>
-                  <p className="text-center text-[10px] text-gray-500">By clicking Create, you sign a Session Key transaction. <br/>Note: You must be on Polygon Mainnet.</p>
-              </div>
-          </div>
+          <ActivationView 
+              needsActivation={needsActivation}
+              handleActivate={handleActivateSmartAccount}
+              isActivating={isActivating}
+              chainId={chainId}
+              userAddress={userAddress}
+              theme={theme}
+              toggleTheme={toggleTheme}
+          />
       );
   }
 
