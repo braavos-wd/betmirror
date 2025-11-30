@@ -9,6 +9,8 @@ import { ProxyWalletConfig } from '../domain/wallet.types.js';
 import { connectDB, User, Registry, Trade, Feedback, BridgeTransaction, BotLog } from '../database/index.js';
 import { loadEnv } from '../config/env.js';
 import { DbRegistryService } from '../services/db-registry.service.js';
+import { registryAnalytics } from '../services/registry-analytics.service.js';
+import axios from 'axios';
 
 // ESM compatibility
 const __filename = fileURLToPath(import.meta.url);
@@ -119,6 +121,9 @@ async function seedOfficialWallets() {
         }
     }
     console.log(`✅ Seeded ${officials.length} official wallets.`);
+    
+    // Trigger initial analytics run
+    registryAnalytics.updateAllRegistryStats();
 }
 
 // --- API ROUTES ---
@@ -369,9 +374,25 @@ app.post('/api/registry', async (req, res) => {
             listedAt: new Date().toISOString(),
             winRate: 0, totalPnl: 0, tradesLast30d: 0, followers: 0, copyCount: 0, copyProfitGenerated: 0
         });
+        
+        // Trigger background update for new listing
+        registryAnalytics.analyzeWallet(address);
+        
         res.json({success:true, profile});
     } catch (e: any) {
         res.status(500).json({ error: e.message });
+    }
+});
+
+// PROXY: Get raw trades for modal (frontend calls this)
+app.get('/api/proxy/trades/:address', async (req: any, res: any) => {
+    const { address } = req.params;
+    try {
+        const url = `https://data-api.polymarket.com/trades?user=${address}&limit=50`;
+        const response = await axios.get(url);
+        res.json(response.data);
+    } catch (e) {
+        res.status(500).json({ error: "Failed to fetch trades from Polymarket" });
     }
 });
 
@@ -443,6 +464,9 @@ async function restoreBots() {
 connectDB(ENV.mongoUri).then(async () => {
     // Seed system wallets first
     await seedOfficialWallets();
+    
+    // Start Registry Analytics Loop (Every 15 mins)
+    setInterval(() => registryAnalytics.updateAllRegistryStats(), 15 * 60 * 1000);
     
     app.listen(PORT, () => {
         console.log(`🌍 Bet Mirror Cloud Server running on port ${PORT}`);
