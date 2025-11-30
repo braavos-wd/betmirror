@@ -3,7 +3,7 @@
 
 ![Bet Mirror Header](./docs/assets/header.png)
 
-**The world's first AI-powered, 24/7 server-side copy trading platform for Polymarket.**
+**Bet Mirror Pro** is an enterprise-grade trading terminal designed to democratize algorithmic prediction market trading. Unlike traditional bots that require custodial private keys, Bet Mirror leverages **ERC-4337 Account Abstraction** to offer a fully non-custodial solution. Users retain full control of their funds while granting restricted "Session Keys" to a cloud-based engine that executes trades 24/7 based on **AI Risk Analysis** and **Copy Trading signals**. The platform includes a built-in "Alpha Registry" marketplace, rewarding top traders with a 1% protocol fee from every copier.
 
 Developed by **PolyCafe**.
 
@@ -12,8 +12,6 @@ Developed by **PolyCafe**.
 ![React](https://img.shields.io/badge/React-18-blue)
 ![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-green)
 ![ZeroDev](https://img.shields.io/badge/ZeroDev-AA-purple)
-
-**Bet Mirror Pro** is a sophisticated trading terminal that allows users to mirror high-performance Polymarket traders automatically. Unlike traditional bots that require your private keys, Bet Mirror Pro uses **Account Abstraction (ERC-4337)** to separate *Ownership* from *Trading Permissions*.
 
 ---
 
