@@ -4,8 +4,11 @@ import axios from 'axios';
 
 // Initialize LiFi Config
 const lifiConfig = createConfig({
-  integrator: 'polycafe-BetMirror',
+  integrator: 'Bet Mirror Pro', // Registered DApp Name for Monetization
   providers: [], // Auto-detect window.ethereum / window.solana
+  routeOptions: {
+    fee: 0.005, // 0.5% Protocol Fee (Global Setting)
+  }
 });
 
 export interface BridgeQuoteParams {
@@ -40,7 +43,7 @@ export class LiFiBridgeService {
   
   /**
    * Get a quote to bridge funds from User's Chain -> Polygon Proxy
-   * Includes 0.5% Integrator Fee
+   * Fees are now applied globally via createConfig
    */
   async getDepositRoute(params: BridgeQuoteParams) {
     try {
@@ -53,9 +56,8 @@ export class LiFiBridgeService {
         toAddress: params.toAddress,
         options: {
             slippage: 0.005, // 0.5% Slippage
-            order: 'CHEAPEST',
-            fee: 0.005, // 0.5% Protocol Fee (Monetization)
-            integrator: 'polycafe-BetMirror' 
+            order: 'CHEAPEST'
+            // Integrator and Fee are now handled globally
         }
       });
       

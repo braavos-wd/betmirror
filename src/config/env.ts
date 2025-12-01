@@ -46,6 +46,10 @@ export type RuntimeEnv = {
   // AA
   zeroDevRpc: string;
   zeroDevProjectId?: string;
+  
+  // Li.Fi Monetization
+  lifiIntegrator: string;
+  lifiApiKey?: string;
 
   // Database
   mongoUri: string;
@@ -144,6 +148,10 @@ export function loadEnv(): RuntimeEnv {
     // AA
     zeroDevRpc: process.env.ZERODEV_RPC || 'https://rpc.zerodev.app/api/v2/bundler/your-project-id',
     zeroDevProjectId: process.env.ZERODEV_PROJECT_ID,
+    
+    // Li.Fi
+    lifiIntegrator: process.env.LIFI_INTEGRATOR || 'Bet Mirror Pro',
+    lifiApiKey: process.env.LIFI_API_KEY,
 
     // Database
     mongoUri: process.env.MONGODB_URI || defaultMongoUri,

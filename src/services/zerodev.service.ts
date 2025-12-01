@@ -51,7 +51,7 @@ export class ZeroDevService {
     this.publicClient = createPublicClient({
       chain: CHAIN,
       transport: http(PUBLIC_RPC),
-    });
+    }) as unknown as PublicClient;
   }
 
   private normalizeRpcUrl(input: string): string {
