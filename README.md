@@ -35,7 +35,7 @@ Bet Mirror Pro transforms complex algorithmic trading into a simple 3-step proce
 
 ### 3. The Marketplace & Profit
 - **Copy Trading:** Users browse the **Alpha Registry** to find whales with high win rates.
-- **Fee Sharing:** When a user profits from a copied trade, a **1% fee** is automatically sent to the original trader (The Lister) and **1%** to the Platform.
+- **Fee Sharing:** When a user profits from a copied trade, a **1% fee** is automatically sent to the **Lister** (the user who found and listed the wallet) and **1%** to the Platform. This rewards discovery.
 - **Trustless Withdraw:** Users can trigger a forced withdrawal from the dashboard at any time, bypassing the server entirely.
 
 ---

@@ -1885,7 +1885,8 @@ const App = () => {
                             Alpha Registry <span className="bg-blue-600 dark:bg-terminal-accent text-xs px-2 py-0.5 rounded text-white font-mono">GLOBAL</span>
                         </h2>
                         <p className="text-sm text-gray-500 max-w-xl mb-6">
-                            Discover high-performing wallets. Copy them to earn profit. List them to <span className="text-gray-900 dark:text-white font-bold">earn 1%</span> fees on every copy.
+                            Discover high-performing wallets. Copy them to earn profit. <br/>
+                            <strong>Finder's Rewards:</strong> List any top trader you discover. If others copy them, <span className="text-gray-900 dark:text-white font-bold">YOU earn the 1% fee</span>.
                         </p>
                         <div className="flex gap-2 bg-gray-100 dark:bg-black/50 p-2 rounded-lg border border-gray-200 dark:border-gray-800 max-w-lg">
                             <div className="flex-1 flex items-center px-3">
@@ -2221,7 +2222,7 @@ const App = () => {
                     </div>
                 </div>
 
-                {/* 5. ECONOMICS (Restored) */}
+                {/* 5. ECONOMICS */}
                 <div className="glass-panel p-6 rounded-xl border border-gray-200 dark:border-terminal-border bg-green-50/50 dark:bg-green-900/5 flex items-start gap-4">
                     <div className="p-3 bg-green-100 dark:bg-green-900/20 rounded-full text-green-600 dark:text-green-500 shrink-0">
                         <Coins size={24}/>
@@ -2229,8 +2230,9 @@ const App = () => {
                     <div>
                         <h4 className="font-bold text-gray-900 dark:text-white mb-1">How does the 1% Fee work?</h4>
                         <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-                            When you copy a profitable trade, 1% of the <em>net profit</em> is automatically sent to the wallet that you copied (if they are registered). 
-                            This incentivizes the best traders to list themselves in the Registry.
+                            When you copy a profitable trade, 1% of the <em>net profit</em> is sent to the <strong>Lister</strong> (the user who discovered and added that wallet to the registry).
+                            <br/>
+                            You can earn passive income simply by finding and listing high-win-rate whales for others to copy.
                         </p>
                     </div>
                 </div>

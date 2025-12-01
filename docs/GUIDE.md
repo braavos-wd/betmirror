@@ -78,5 +78,5 @@ If the Bet Mirror website goes offline forever:
 ## 💎 The Alpha Registry Economy
 
 *   **List:** Anyone can list a wallet in the Marketplace.
-*   **Earn:** If users copy you, **1% of their net profit** is sent to your wallet automatically via a smart contract transfer.
-*   **Grow:** High win-rate traders rise to the top of the leaderboard.
+*   **Earn:** If users copy a wallet you listed, **1% of their net profit** is sent to *your* wallet automatically.
+*   **Finder's Fee:** You don't have to be the trader. You just have to be the one who found them.
