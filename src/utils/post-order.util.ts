@@ -1,3 +1,4 @@
+
 import type { ClobClient } from '@polymarket/clob-client';
 import { OrderType, Side } from '@polymarket/clob-client';
 
@@ -17,11 +18,22 @@ export type PostOrderInput = {
 export async function postOrder(input: PostOrderInput): Promise<void> {
   const { client, marketId, tokenId, outcome, side, sizeUsd, maxAcceptablePrice } = input;
 
-  // Optional: validate market exists if marketId provided
+  // 1. Pre-Check: Ensure Market is Active
   if (marketId) {
-    const market = await client.getMarket(marketId);
-    if (!market) {
-      throw new Error(`Market not found: ${marketId}`);
+    try {
+        const market = await client.getMarket(marketId);
+        if (!market) {
+            throw new Error(`Market not found: ${marketId}`);
+        }
+        
+        // Check if market is closed/resolved to avoid 404 on Orderbook
+        // Polymarket API typically returns 'closed' boolean or 'active' boolean
+        if ((market as any).closed || (market as any).active === false || (market as any).enable_order_book === false) {
+             throw new Error(`Market ${marketId} is closed or resolved. Cannot trade.`);
+        }
+    } catch (e) {
+        // If getMarket fails, we probably can't trade anyway
+        throw new Error(`Failed to validate market status: ${(e as Error).message}`);
     }
   }
 
@@ -31,6 +43,7 @@ export async function postOrder(input: PostOrderInput): Promise<void> {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     if (errorMessage.includes('No orderbook exists') || errorMessage.includes('404')) {
+      // This is an expected condition for old/resolved markets
       throw new Error(`Market ${marketId} is closed or resolved - no orderbook available for token ${tokenId}`);
     }
     throw error;
@@ -107,4 +120,3 @@ export async function postOrder(input: PostOrderInput): Promise<void> {
     }
   }
 }
-
