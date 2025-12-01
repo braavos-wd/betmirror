@@ -247,13 +247,13 @@ app.get('/api/stats/global', async (req: any, res: any) => {
                 const response = await axios.get<BuilderVolumeData[]>(url, { timeout: 3000 });
                 
                 if (Array.isArray(response.data) && response.data.length > 0) {
-                    // Sort Descending for "Current" snapshot (Newest first)
-                    const sortedDesc = [...response.data].sort((a, b) => new Date(b.dt).getTime() - new Date(a.dt).getTime());
-                    builderStats = sortedDesc[0]; 
-                    
-                    // Sort Ascending for Chart (Oldest -> Newest)
-                    // Fixes "Reverse Order" chart bug
-                    builderHistory = [...response.data].sort((a, b) => new Date(a.dt).getTime() - new Date(b.dt).getTime()).slice(-14); 
+                    const sorted = response.data.sort((a, b) => new Date(b.dt).getTime() - new Date(a.dt).getTime());
+
+
+                builderStats = sorted[0]; // Most recent day
+
+
+                builderHistory = sorted.slice(0, 14); // Last 14 days
                 }
             }
         } catch (e) {
