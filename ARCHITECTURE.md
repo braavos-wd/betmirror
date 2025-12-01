@@ -32,6 +32,7 @@ graph TD
     ZeroDev["ZeroDev Bundler"]
     Poly["Polymarket (Polygon)"]
     LiFi["Li.Fi Protocol"]
+    BuilderAPI["Polymarket Builder API"]
 
     User -->|"1. Connects & Signs"| Web
     Web -->|"2. Creates Session Key"| Web
@@ -49,127 +50,58 @@ graph TD
         API -->|"9. Execute Trade (Session Key)"| ZeroDev
         ZeroDev -->|"10. On-Chain Settlment"| Poly
     end
+    
+    subgraph "Analytics Loop"
+        API -.->|"11. Fetch Registry Stats"| BuilderAPI
+        API -.->|"12. Update WinRates"| DB
+    end
 ```
 
 ---
 
-## 3. Account Abstraction (Deep Dive)
+## 3. Account Abstraction & Security Model
 
 We utilize **ZeroDev** and the **Kernel v3.1** smart account standard to implement ERC-4337.
 
-### Why is this secure?
-In a standard EOA (Externally Owned Account) wallet, the Private Key can do everything: Trade, Transfer, Burn.
-In our Smart Account architecture, we use **Session Keys**.
+### The Key Hierarchy (Current)
 
-### The Key Hierarchy
-
-| Key Type | Location | Permission Level | Expiry |
+| Key Type | Location | Permission Level | Notes |
 | :--- | :--- | :--- | :--- |
-| **Owner Key** | User's Hardware/Web Wallet | **Root Admin**. Can withdraw funds, revoke keys, update settings. | Never |
-| **Session Key** | Encrypted in MongoDB | **Restricted**. Can ONLY call `createOrder` on Polymarket. Cannot transfer USDC out. | 30 Days |
+| **Owner Key** | User's Wallet | **Root Admin** | Can withdraw funds, revoke keys, update settings. |
+| **Session Key** | Server (Encrypted) | **Sudo (Temporary)** | Currently requires Sudo to process Fee Payments (1%). See Phase 4 Roadmap. |
+
+*   **Trust Trade-off:** In the current version, the Session Key has elevated permissions to facilitate the 1% fee transfer.
+*   **Mitigation:** The server never stores the Owner Key. The Session Key can be revoked on-chain by the user at any time.
+*   **Future (Phase 4):** Moving fee logic to a Smart Contract Module will allow downgrading the Session Key to "Trade Only" scope.
 
 ### Trustless Withdrawal
 Because the User is the "Owner" of the Smart Contract on the blockchain, they can interact with it directly, bypassing our server entirely.
 1.  User signs a `UserOperation` on the frontend.
 2.  The operation calls `transfer(usdc, userAddress, balance)`.
-3.  This operation is submitted to the bundler.
-4.  The Smart Account executes it immediately.
-*The bot server cannot stop this process.*
+3.  The Smart Account executes it immediately.
 
 ---
 
 ## 4. Data Persistence & Recovery
 
-We have migrated from ephemeral `JSON/LocalStorage` to a production-grade **MongoDB** cluster. This ensures reliability during deployments or crashes.
+We have migrated from ephemeral `JSON/LocalStorage` to a production-grade **MongoDB** cluster.
 
 ### Database Schema Strategy
+*   **Users Collection:** Stores `SmartAccountAddress`, `SerializedSessionKey`, `BotConfig`, and `ActivePositions`.
+*   **Trades Collection:** Immutable log of every action with `AIReasoning`.
+*   **Registry Collection:** Tracks `CopyCount` and `ProfitGenerated`.
 
-*   **Users Collection:** 
-    *   Stores the `SmartAccountAddress`.
-    *   Stores the `SerializedSessionKey` (needed to rebuild the signing instance on server restart).
-    *   Stores `BotConfig` (Targets, Multipliers, Risk Profile).
-    *   Stores `ActivePositions` (Entry prices for PnL calculation).
-
-*   **Trades Collection:**
-    *   Immutable log of every action.
-    *   Includes `AIReasoning` strings and `RiskScores`.
-
-*   **Registry Collection:**
-    *   Stores the Alpha Marketplace data.
-    *   Tracks `CopyCount` and `ProfitGenerated` for revenue sharing calculations.
-
-### Auto-Recovery Protocol
-1.  **Server Restart:** When the Node.js process restarts (e.g., new deployment), memory is wiped.
+### Auto-Recovery
+1.  **Server Restart:** When the Node.js process restarts, memory is wiped.
 2.  **Rehydration:** The server queries MongoDB for all users with `isBotRunning: true`.
-3.  **State Reconstruction:** It pulls the `ActivePositions` and `SessionKey` from the DB.
-4.  **Resume:** The bot calculates the `StartCursor` (timestamp of the last known trade) and resumes monitoring from that exact second. **No trades are missed.**
+3.  **Resume:** The bot resumes monitoring from the last known timestamp.
 
 ---
 
-## 5. Technology Stack & External Services
+## 5. Technology Stack
 
-### Infrastructure
-*   **Hosting:** Dockerized Node.js (Sliplane/Railway/AWS).
-*   **Database:** MongoDB Atlas (M0/M10 Cluster).
-
-### Web3 Providers
-*   **ZeroDev:** AA Bundler & Paymaster (Gas sponsorship).
-*   **Li.Fi:** Cross-chain bridging (Any Chain -> Polygon).
-*   **Polymarket CLOB:** Order book interaction.
-*   **Viem:** TypeScript interface for Ethereum.
-
-### AI
-*   **Google Gemini 2.5 Flash:** Extremely low latency model used to analyze prediction market questions (e.g., "Will Bitcoin hit 100k?") against the user's risk profile (Conservative/Degen) to prevent "bad" copies.
-
----
-## 6. Directory Structure
-
-```
-src/
-├── app/                 # CLI Entry points
-├── config/              # Env variables & Constants
-├── database/            # MongoDB Connection & Mongoose Models (User, Trade, Registry)
-├── domain/              # TypeScript Interfaces (Types)
-├── infrastructure/      # External Clients (Polymarket)
-├── server/              # Backend API & Bot Engine
-├── services/            # Core Logic
-│   ├── ai-agent.service.ts       # Gemini Risk Analysis
-│   ├── lifi-bridge.service.ts    # Cross-Chain Bridging
-│   ├── zerodev.service.ts        # Account Abstraction
-│   ├── trade-executor.service.ts # Execution Logic
-│   ├── trade-monitor.service.ts  # Signal Detection
-│   └── web3.service.ts           # Client-side Wallet Interaction
-└── utils/               # Helpers
-```
-
----
-
-## 7. Roadmap
-
-### Phase 1: Managed SaaS (Completed)
-- [x] Server-side execution.
-- [x] Basic EOA support.
-
-### Phase 2: Persistence & Scale (Completed)
-- [x] Migration from JSON files to **MongoDB**.
-- [x] Auto-recovery of bots after server restart.
-- [x] Centralized Trade History API.
-
-### Phase 3: Account Abstraction (Current)
-- [x] ZeroDev Smart Account integration.
-- [x] Session Key delegation.
-
-### Phase 4: Decentralized Registry (Next)
-- [ ] Move the `Registry` MongoDB collection to an on-chain Smart Contract.
-- [ ] Listers stake tokens to verify performance.
-- [ ] Fee distribution handles automatically via smart contract splits.
-
----
-
-## 8. External Resources
-
-*   [ZeroDev Documentation](https://docs.zerodev.app/) - Account Abstraction SDK.
-*   [ERC-4337 Specification](https://eips.ethereum.org/EIPS/eip-4337) - The standard for Smart Accounts.
-*   [Polymarket API](https://docs.polymarket.com/) - CLOB & Data API.
-*   [Li.Fi Docs](https://docs.li.fi/) - Cross-chain bridging SDK.
-
+*   **Frontend:** React 18, Vite, TailwindCSS, Lucide Icons.
+*   **Backend:** Node.js, Express, TypeScript.
+*   **Database:** MongoDB Atlas.
+*   **Blockchain:** Viem, Ethers.js v6, ZeroDev SDK (Kernel v3.1), Li.Fi SDK.
+*   **AI:** Google Gemini 2.5 Flash.

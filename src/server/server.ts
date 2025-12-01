@@ -234,33 +234,30 @@ app.get('/api/stats/global', async (req: any, res: any) => {
         // A. Our Profile
         let builderStats: BuilderVolumeData | null = null;
         let builderHistory: BuilderVolumeData[] = [];
-        let builderId = ENV.builderId || 'BetMirror'; 
+        let builderId = ENV.builderId || 'BetMirror'; // Default
         
         // B. Ecosystem Total (Leaderboard Sum)
-        let ecosystemVolume = 0;
-        let globalBuilderStats: BuilderVolumeData | null = null;
+        let ecosystemVolume = 112005785; // Placeholder for total network volume
 
         try {
-            // 1. Fetch Our Stats (Attribution)
-            const url = `https://data-api.polymarket.com/v1/builders/volume?builder=${builderId}&timePeriod=ALL`;
-            const response = await axios.get<BuilderVolumeData[]>(url, { timeout: 3000 });
-            
-            if (Array.isArray(response.data) && response.data.length > 0) {
-                // Sort Descending for "Current" snapshot
-                const sortedDesc = [...response.data].sort((a, b) => new Date(b.dt).getTime() - new Date(a.dt).getTime());
-                builderStats = sortedDesc[0]; 
+            if (builderId) {
+                // 1. Fetch Our Stats (Attribution)
+                // Filter is: ?builder=BetMirror
+                const url = `https://data-api.polymarket.com/v1/builders/volume?builder=${builderId}&timePeriod=ALL`;
+                const response = await axios.get<BuilderVolumeData[]>(url, { timeout: 3000 });
                 
-                // Sort Ascending for Chart History (Oldest -> Newest)
-                builderHistory = [...response.data].sort((a, b) => new Date(a.dt).getTime() - new Date(b.dt).getTime()).slice(-14); 
+                if (Array.isArray(response.data) && response.data.length > 0) {
+                    // Sort Descending for "Current" snapshot (Newest first)
+                    const sortedDesc = [...response.data].sort((a, b) => new Date(b.dt).getTime() - new Date(a.dt).getTime());
+                    builderStats = sortedDesc[0]; 
+                    
+                    // Sort Ascending for Chart (Oldest -> Newest)
+                    // Fixes "Reverse Order" chart bug
+                    builderHistory = [...response.data].sort((a, b) => new Date(a.dt).getTime() - new Date(b.dt).getTime()).slice(-14); 
+                }
             }
-
-            // 2. Fetch Ecosystem Leaderboard (Top Level Global Stats)
-            // Note: This API endpoint might vary, we use a simplified aggregation here if direct endpoint unavailable
-            // Assuming we can get a list of top builders or just aggregate our own knowledge
-            // Fallback: if 'BetMirror' is not found, we might be in dev mode.
         } catch (e) {
-            // Graceful fail - API might be down or ID invalid
-            // console.warn("Builder API fetch failed:", e.message);
+            // Graceful fail
         }
 
         res.json({
@@ -277,7 +274,7 @@ app.get('/api/stats/global', async (req: any, res: any) => {
                 current: builderStats,
                 history: builderHistory,
                 builderId: builderId,
-                ecosystemVolume: 112005785 // Placeholder or fetched real value
+                ecosystemVolume: ecosystemVolume
             }
         });
     } catch (e) {

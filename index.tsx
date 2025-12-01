@@ -1564,7 +1564,7 @@ const App = () => {
                                     onClick={() => setSystemView('attribution')}
                                     className={`text-xs font-bold uppercase tracking-widest pb-1 -mb-3 border-b-2 transition-all ${systemView === 'attribution' ? 'border-blue-600 dark:border-blue-400 text-blue-600 dark:text-blue-400' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
                                 >
-                                    My Attribution
+                                    Builder Attribution
                                 </button>
                                 <button 
                                     onClick={() => setSystemView('global')}
