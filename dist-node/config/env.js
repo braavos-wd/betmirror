@@ -66,7 +66,7 @@ export function loadEnv() {
         builderApiKey: process.env.POLY_BUILDER_API_KEY,
         builderApiSecret: process.env.POLY_BUILDER_SECRET,
         builderApiPassphrase: process.env.POLY_BUILDER_PASSPHRASE,
-        builderId: process.env.POLY_BUILDER_ID || 'BetMirror',
+        builderId: process.env.POLY_BUILDER_ID || 'Bet Mirror',
         registryApiUrl: process.env.REGISTRY_API_URL || 'http://localhost:3000/api',
         adminRevenueWallet: process.env.ADMIN_REVENUE_WALLET || '0xAdminRevenueWalletHere',
         // Automation

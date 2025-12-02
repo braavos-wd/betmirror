@@ -203,7 +203,7 @@ app.get('/api/stats/global', async (req, res) => {
         let ecosystemVolume = 112005785; // Fallback ecosystem volume
         try {
             // 1. Get Specific Builder Stats (Time-Series /volume)
-            const builderId = ENV.builderId || 'BetMirror';
+            const builderId = ENV.builderId || 'Bet Mirror';
             const url = `https://data-api.polymarket.com/v1/builders/volume?builder=${builderId}&timePeriod=ALL`;
             const response = await axios.get(url, { timeout: 4000 });
             if (Array.isArray(response.data) && response.data.length > 0) {
@@ -241,7 +241,7 @@ app.get('/api/stats/global', async (req, res) => {
             builder: {
                 current: builderStats,
                 history: builderHistory,
-                builderId: ENV.builderId || 'BetMirror',
+                builderId: ENV.builderId || 'Bet Mirror',
                 ecosystemVolume // Total volume of all builders
             }
         });

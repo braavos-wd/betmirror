@@ -30,49 +30,53 @@ graph TD
     API["API Server (Node.js)"]
     DB[("MongoDB Atlas")]
     ZeroDev["ZeroDev Bundler"]
-    Poly["Polymarket (Polygon)"]
+    Poly["Polymarket CLOB"]
     LiFi["Li.Fi Protocol"]
-    BuilderAPI["Polymarket Builder API"]
 
     User -->|"1. Connects & Signs"| Web
     Web -->|"2. Creates Session Key"| Web
     Web -->|"3. Sends Encrypted Session"| API
-    API -->|"4. Stores State"| DB
+    API -->|"4. Persist Session"| DB
     
-    subgraph "Funding Flow"
-        Web -->|"5. Bridge Funds"| LiFi
-        LiFi -->|"6. Deposit USDC"| ZeroDev
+    subgraph "L2 Authentication Handshake"
+        API -->|"5. Sign 'CreateApiKey'"| ZeroDev
+        ZeroDev -->|"6. Verify Signature"| Poly
+        Poly -->|"7. Return L2 Creds"| API
+        API -->|"8. Persist L2 Creds"| DB
     end
 
     subgraph "Trading Loop"
-        API -->|"7. Monitor Signals"| Poly
-        API -->|"8. AI Analysis (Gemini)"| API
-        API -->|"9. Execute Trade (Session Key)"| ZeroDev
-        ZeroDev -->|"10. On-Chain Settlment"| Poly
-    end
-    
-    subgraph "Analytics Loop"
-        API -.->|"11. Fetch Registry Stats"| BuilderAPI
-        API -.->|"12. Update WinRates"| DB
+        API -->|"9. Monitor Signals"| Poly
+        API -->|"10. AI Analysis (Gemini)"| API
+        API -->|"11. Execute Trade (Session Key)"| ZeroDev
+        ZeroDev -->|"12. On-Chain Settlement"| Poly
     end
 ```
 
 ---
 
-## 3. Account Abstraction & Security Model
+## 3. The Three-Tier Key Hierarchy
+
+To interact with a hybrid exchange like Polymarket, we must bridge the gap between **Blockchain Security** (Signing) and **Web Server Security** (API Access). We use a tiered model to ensure the User's funds are never exposed.
+
+| Level | Key Type | Location | Permission Scope |
+| :--- | :--- | :--- | :--- |
+| **L1** | **Owner Key** | User's Wallet | **Root Admin.** Can withdraw funds, revoke keys, upgrade contracts. **Never leaves your device.** |
+| **L2** | **Session Key** | Bot Server (Encrypted) | **Signer.** Can validly sign trade instructions (UserOps) on behalf of the Smart Account. Cannot withdraw funds. |
+| **L3** | **CLOB API Key** | Bot Server (DB) | **Messenger.** An HTTP/WS access token used to talk to the Polymarket Matching Engine. It cannot sign transactions or move funds. |
+
+### The L2 "Handshake"
+Why do we store "API Credentials" if we are non-custodial?
+1.  **The Problem:** The Polymarket Web Server (CLOB) rejects requests that don't have an `Authorization` header (API Key/Secret), even if the blockchain signature is valid. This is for DDoS protection and rate limiting.
+2.  **The Fix:** On the first run, the Bot uses the **Session Key** (L2) to cryptographically sign a message: *"I am this Smart Account, please give me an API Key."*
+3.  **The Result:** Polymarket returns a standard API Key/Secret (L3). We store this to maintain a persistent connection.
+4.  **Security:** Even if the L3 API Key is stolen, it cannot be used to withdraw funds because it cannot *sign* blockchain transactions. It can only *send* them.
+
+---
+
+## 4. Account Abstraction & Security Model
 
 We utilize **ZeroDev** and the **Kernel v3.1** smart account standard to implement ERC-4337.
-
-### The Key Hierarchy (Current)
-
-| Key Type | Location | Permission Level | Notes |
-| :--- | :--- | :--- | :--- |
-| **Owner Key** | User's Wallet | **Root Admin** | Can withdraw funds, revoke keys, update settings. |
-| **Session Key** | Server (Encrypted) | **Sudo (Temporary)** | Currently requires Sudo to process Fee Payments (1%). See Phase 4 Roadmap. |
-
-*   **Trust Trade-off:** In the current version, the Session Key has elevated permissions to facilitate the 1% fee transfer.
-*   **Mitigation:** The server never stores the Owner Key. The Session Key can be revoked on-chain by the user at any time.
-*   **Future (Phase 4):** Moving fee logic to a Smart Contract Module will allow downgrading the Session Key to "Trade Only" scope.
 
 ### Trustless Withdrawal
 Because the User is the "Owner" of the Smart Contract on the blockchain, they can interact with it directly, bypassing our server entirely.
@@ -82,12 +86,12 @@ Because the User is the "Owner" of the Smart Contract on the blockchain, they ca
 
 ---
 
-## 4. Data Persistence & Recovery
+## 5. Data Persistence & Recovery
 
 We have migrated from ephemeral `JSON/LocalStorage` to a production-grade **MongoDB** cluster.
 
 ### Database Schema Strategy
-*   **Users Collection:** Stores `SmartAccountAddress`, `SerializedSessionKey`, `BotConfig`, and `ActivePositions`.
+*   **Users Collection:** Stores `SmartAccountAddress`, `SerializedSessionKey`, `BotConfig`, and `L2ApiCredentials`.
 *   **Trades Collection:** Immutable log of every action with `AIReasoning`.
 *   **Registry Collection:** Tracks `CopyCount` and `ProfitGenerated`.
 
@@ -98,7 +102,7 @@ We have migrated from ephemeral `JSON/LocalStorage` to a production-grade **Mong
 
 ---
 
-## 5. Technology Stack
+## 6. Technology Stack
 
 *   **Frontend:** React 18, Vite, TailwindCSS, Lucide Icons.
 *   **Backend:** Node.js, Express, TypeScript.

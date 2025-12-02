@@ -13,9 +13,16 @@ import { UserStats } from '../domain/user.types.js';
 import { ProxyWalletConfig } from '../domain/wallet.types.js'; 
 import { ClobClient, Chain, ApiKeyCreds } from '@polymarket/clob-client';
 import { Wallet, AbstractSigner, Provider, JsonRpcProvider, TransactionRequest } from 'ethers';
-import { BotLog } from '../database/index.js';
+import { BotLog, User } from '../database/index.js';
 import { BuilderConfig, BuilderApiKeyCreds } from '@polymarket/builder-signing-sdk';
 import { getMarket } from '../utils/fetch-data.util.js';
+
+// --- Local Enum Definition for SignatureType (Missing in export) ---
+enum SignatureType {
+    EOA = 0,
+    POLY_GNOSIS_SAFE = 1,
+    POLY_PROXY = 2
+}
 
 // --- ADAPTER: ZeroDev (Viem) -> Ethers.js Signer ---
 class KernelEthersSigner extends AbstractSigner {
@@ -100,6 +107,12 @@ export interface BotConfig {
   polymarketApiKey?: string;
   polymarketApiSecret?: string;
   polymarketApiPassphrase?: string;
+  // L2 API Credentials for Smart Account (Passed from DB if they exist)
+  l2ApiCredentials?: {
+      key: string;
+      secret: string;
+      passphrase: string;
+  };
   // Restart Logic
   startCursor?: number; // Timestamp to resume from
 }
@@ -198,15 +211,15 @@ export class BotEngine {
       let signerImpl: any;
       let walletAddress: string;
       let clobCreds: ApiKeyCreds | undefined = undefined;
+      let signatureType = SignatureType.EOA; // Default
 
       // 1. Smart Account Strategy
       if (this.config.walletConfig?.type === 'SMART_ACCOUNT' && this.config.walletConfig.serializedSessionKey) {
           await this.addLog('info', '🔐 Initializing ZeroDev Smart Account Session...');
           
-          // Check if RPC is configured properly
           const rpcUrl = this.config.zeroDevRpc || process.env.ZERODEV_RPC;
           if (!rpcUrl || rpcUrl.includes('your-project-id') || rpcUrl.includes('DEFAULT')) {
-               throw new Error("CRITICAL: ZERODEV_RPC is missing or invalid in .env. Please create a project at zerodev.app (Polygon) and add the Bundler URL.");
+               throw new Error("CRITICAL: ZERODEV_RPC is missing or invalid in .env.");
           }
           
           const aaService = new ZeroDevService(rpcUrl);
@@ -217,7 +230,43 @@ export class BotEngine {
           
           const provider = new JsonRpcProvider(this.config.rpcUrl);
           signerImpl = new KernelEthersSigner(kernelClient, address, provider);
-          clobCreds = undefined; 
+          
+          // AA / Smart Accounts typically use POLY_PROXY or POLY_GNOSIS_SAFE. 
+          // Since we are ZeroDev Kernel (ERC-4337), we treat it as a proxy.
+          signatureType = SignatureType.POLY_PROXY; 
+          
+          // --- AUTO-GENERATE L2 KEYS IF MISSING ---
+          // Smart Accounts don't come with L2 keys. We must generate them via signature once and save them.
+          if (this.config.l2ApiCredentials) {
+              clobCreds = this.config.l2ApiCredentials;
+              await this.addLog('info', '🔑 Loaded Existing L2 Trading Credentials');
+          } else {
+              await this.addLog('info', '⚙️ Generating new L2 Trading Credentials for Smart Account...');
+              try {
+                  // We create a temp client just to perform the handshake/signing
+                  const tempClient = new ClobClient(
+                      'https://clob.polymarket.com',
+                      Chain.POLYGON,
+                      signerImpl,
+                      undefined,
+                      signatureType as any // Cast to any to satisfy TS if ClobClient expects the library enum
+                  );
+                  
+                  // Sign a message on-chain (via Session Key) to derive the API Key
+                  const newCreds = await tempClient.createApiKey();
+                  clobCreds = newCreds;
+                  
+                  // Persist to DB so we don't re-gen every time (which invalidates old ones)
+                  await User.findOneAndUpdate(
+                      { address: this.config.userId },
+                      { "proxyWallet.l2ApiCredentials": newCreds }
+                  );
+                  
+                  await this.addLog('success', '✅ L2 Credentials Generated & Secured.');
+              } catch (e: any) {
+                  throw new Error(`Failed to auto-generate L2 Keys: ${e.message}`);
+              }
+          }
 
       } else {
           // 2. Legacy EOA Strategy
@@ -230,7 +279,6 @@ export class BotEngine {
           walletAddress = signerImpl.address;
 
           if (this.config.polymarketApiKey && this.config.polymarketApiSecret && this.config.polymarketApiPassphrase) {
-              await this.addLog('info', '⚡ API Keys Loaded (High Performance Mode)');
               clobCreds = {
                   key: this.config.polymarketApiKey,
                   secret: this.config.polymarketApiSecret,
@@ -248,16 +296,16 @@ export class BotEngine {
               passphrase: process.env.POLY_BUILDER_PASSPHRASE
           };
           builderConfig = new BuilderConfig({ localBuilderCreds: builderCreds });
-          await this.addLog('info', '👷 Builder Program Attribution Active (Stamping Trades)');
+          await this.addLog('info', '👷 Builder Program Attribution Active');
       }
 
-      // Initialize Polymarket Client with Builder Attribution
+      // Initialize Polymarket Client with Credentials AND Builder Attribution
       const clobClient = new ClobClient(
           'https://clob.polymarket.com',
           Chain.POLYGON,
           signerImpl, 
           clobCreds,
-          undefined, // signatureType
+          signatureType as any, 
           undefined, // funderAddress
           undefined, // ...
           undefined, // ...
@@ -332,7 +380,6 @@ export class BotEngine {
                     executedSize = await this.executor.copyTrade(signal);
                 }
                 
-                // If size is 0, it means trade failed gracefully (e.g. insufficient balance or market closed)
                 if (executedSize > 0) {
                     await this.addLog('success', `Trade Executed Successfully!`);
                     
@@ -344,7 +391,7 @@ export class BotEngine {
                             tokenId: signal.tokenId,
                             outcome: signal.outcome,
                             entryPrice: signal.price,
-                            sizeUsd: executedSize, // Track executed size for PnL
+                            sizeUsd: executedSize, 
                             timestamp: Date.now()
                         };
                         this.activePositions.push(newPosition);
@@ -353,7 +400,7 @@ export class BotEngine {
                         if (posIndex !== -1) {
                             const entry = this.activePositions[posIndex];
                             const yieldPercent = (signal.price - entry.entryPrice) / entry.entryPrice;
-                            realPnl = entry.sizeUsd * yieldPercent; // Calculate PnL on actual size
+                            realPnl = entry.sizeUsd * yieldPercent; 
                             await this.addLog('info', `Realized PnL: $${realPnl.toFixed(2)} (${(yieldPercent*100).toFixed(1)}%)`);
                             this.activePositions.splice(posIndex, 1);
                         } else {
@@ -364,24 +411,21 @@ export class BotEngine {
 
                     if (this.callbacks?.onPositionsUpdate) await this.callbacks.onPositionsUpdate(this.activePositions);
 
-                    // Log History (Database)
                     await this.recordTrade({
                         marketId: signal.marketId,
                         outcome: signal.outcome,
                         side: signal.side,
                         price: signal.price,
-                        size: signal.sizeUsd, // Whale Size
-                        executedSize: executedSize, // Bot Size
+                        size: signal.sizeUsd, 
+                        executedSize: executedSize, 
                         aiReasoning: aiReasoning,
                         riskScore: riskScore,
                         pnl: realPnl,
                         status: signal.side === 'SELL' ? 'CLOSED' : 'OPEN'
                     });
 
-                    // Notify User
                     await notifier.sendTradeAlert(signal);
 
-                    // Distribute Fees on PROFIT ONLY
                     if (signal.side === 'SELL' && realPnl > 0) {
                         const feeEvent = await feeDistributor.distributeFeesOnProfit(signal.marketId, realPnl, signal.trader);
                         if (feeEvent) {
@@ -392,7 +436,6 @@ export class BotEngine {
                     
                     if (this.callbacks?.onStatsUpdate) await this.callbacks.onStatsUpdate(this.stats);
 
-                    // Check for cashout after a profitable trade
                     setTimeout(async () => {
                     const cashout = await fundManager.checkAndSweepProfits();
                     if (cashout && this.callbacks?.onCashout) await this.callbacks.onCashout(cashout);
@@ -402,7 +445,6 @@ export class BotEngine {
                 await this.addLog('error', `Execution Failed: ${err.message}`);
             }
           } else {
-             // Log Skipped Trade
              await this.recordTrade({
                 marketId: signal.marketId,
                 outcome: signal.outcome,
@@ -418,10 +460,7 @@ export class BotEngine {
         }
       });
 
-      // Pass the startCursor to monitor to prevent replaying old trades
       await this.monitor.start(this.config.startCursor);
-      
-      // Watchdog for Auto-Take Profit
       this.watchdogTimer = setInterval(() => this.checkAutoTp(), 10000) as unknown as NodeJS.Timeout;
       
       await this.addLog('success', 'Bot Engine Active & Monitoring 24/7');
@@ -439,21 +478,15 @@ export class BotEngine {
       
       for (const pos of positionsToCheck) {
           try {
-              // PRE-CHECK: Verify market is still active to avoid 404 Orderbook errors
               let isClosed = false;
               try {
                   const market = await getMarket(pos.marketId);
-                  // Market can be closed OR resolved
                   if (market.closed || market.active === false || market.enable_order_book === false) {
                       isClosed = true;
                   }
-              } catch (e) {
-                   // API Error - fail safe skip
-                   continue; 
-              }
+              } catch (e) { continue; }
 
               if (isClosed) {
-                  // Remove from tracking silently to stop errors
                   this.activePositions = this.activePositions.filter(p => p.tokenId !== pos.tokenId);
                   if (this.callbacks?.onPositionsUpdate) await this.callbacks.onPositionsUpdate(this.activePositions);
                   continue;
@@ -490,7 +523,6 @@ export class BotEngine {
                   }
               }
           } catch (e: any) { 
-               // If 404 leaks through, ensure we remove the bad position
                if (e.message?.includes('404') || e.response?.status === 404 || e.status === 404) {
                    this.activePositions = this.activePositions.filter(p => p.tokenId !== pos.tokenId);
                    if (this.callbacks?.onPositionsUpdate) await this.callbacks.onPositionsUpdate(this.activePositions);
@@ -520,7 +552,7 @@ export class BotEngine {
 
       if (data.status !== 'SKIPPED') {
           this.stats.tradesCount = (this.stats.tradesCount || 0) + 1;
-          this.stats.totalVolume = (this.stats.totalVolume || 0) + data.executedSize; // Update stats with REAL volume
+          this.stats.totalVolume = (this.stats.totalVolume || 0) + data.executedSize; 
           if (data.pnl) {
               this.stats.totalPnl = (this.stats.totalPnl || 0) + data.pnl;
           }

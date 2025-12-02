@@ -314,6 +314,10 @@ app.post('/api/bot/start', async (req: any, res: any) => {
           return; 
       }
 
+      // Inject saved L2 credentials if they exist
+      // This allows session continuity without re-generating keys on every start
+      const l2Creds = (user.proxyWallet as any).l2ApiCredentials;
+
       const config: BotConfig = {
         userId: normId,
         walletConfig: user.proxyWallet,
@@ -329,6 +333,7 @@ app.post('/api/bot/start', async (req: any, res: any) => {
         activePositions: user.activePositions || [],
         stats: user.stats,
         zeroDevRpc: process.env.ZERODEV_RPC,
+        l2ApiCredentials: l2Creds, // Pass Credentials to Engine
         startCursor: Math.floor(Date.now() / 1000) 
       };
 
@@ -517,12 +522,16 @@ async function restoreBots() {
                  const lastTrade = await Trade.findOne({ userId: user.address }).sort({ timestamp: -1 });
                  const lastTime = lastTrade ? Math.floor(lastTrade.timestamp.getTime() / 1000) + 1 : Math.floor(Date.now() / 1000) - 3600;
                  
+                 // Pass stored L2 creds to engine during restore
+                 const l2Creds = (user.proxyWallet as any).l2ApiCredentials;
+
                  const config: BotConfig = {
                      ...user.activeBotConfig,
                      walletConfig: user.proxyWallet,
                      stats: user.stats,
                      activePositions: user.activePositions,
-                     startCursor: lastTime
+                     startCursor: lastTime,
+                     l2ApiCredentials: l2Creds
                  };
                  await startUserBot(user.address, config);
                  console.log(`✅ Restored Bot: ${user.address}`);
