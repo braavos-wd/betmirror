@@ -235,10 +235,11 @@ export class BotEngine {
           // Since we are ZeroDev Kernel (ERC-4337), we treat it as a proxy.
           signatureType = SignatureType.POLY_PROXY; 
           
-          // --- AUTO-GENERATE L2 KEYS IF MISSING ---
-          // Strict check: Old bots might have an empty object or missing secret.
-          const dbCreds = this.config.l2ApiCredentials;
+          // --- AUTO-GENERATE / VALIDATE L2 KEYS ---
+          // We must ensure we have valid CLOB API credentials before proceeding.
+          // Without them, the bot cannot sign trades and will crash.
           
+          const dbCreds = this.config.l2ApiCredentials;
           const hasValidCreds = dbCreds 
               && typeof dbCreds.key === 'string' && dbCreds.key.length > 0
               && typeof dbCreds.secret === 'string' && dbCreds.secret.length > 0
@@ -246,9 +247,9 @@ export class BotEngine {
 
           if (hasValidCreds) {
               clobCreds = dbCreds;
-              await this.addLog('success', '[DIAGNOSTIC] L2 Trading Credentials Loaded successfully from DB.');
+              // await this.addLog('success', 'L2 Trading Credentials Loaded.');
           } else {
-              await this.addLog('warn', '⚠️ Missing or Invalid L2 Creds. Initiating Regeneration Handshake...');
+              await this.addLog('warn', '⚠️ No L2 Credentials found. Performing Handshake to generate new ones...');
               try {
                   // We create a temp client just to perform the handshake/signing
                   const tempClient = new ClobClient(
@@ -260,6 +261,7 @@ export class BotEngine {
                   );
                   
                   // Sign a message on-chain (via Session Key) to derive the API Key
+                  // Note: createApiKey() is preferred for new sessions
                   const newCreds = await tempClient.createApiKey();
                   
                   if (!newCreds || !newCreds.key || !newCreds.secret) {
@@ -268,15 +270,17 @@ export class BotEngine {
 
                   clobCreds = newCreds;
                   
-                  // Persist to DB immediately
+                  // Persist to DB immediately so we don't have to do this again
                   await User.findOneAndUpdate(
                       { address: this.config.userId },
                       { "proxyWallet.l2ApiCredentials": newCreds }
                   );
                   
-                  await this.addLog('success', '✅ [RECOVERY] New L2 CLOB Security API Key Created & Saved.');
+                  await this.addLog('success', '✅ New L2 CLOB Keys Generated & Saved.');
               } catch (e: any) {
-                  throw new Error(`Failed to auto-generate L2 Keys: ${e.message}. Bot cannot trade.`);
+                  const msg = e?.message || JSON.stringify(e);
+                  await this.addLog('error', `CRITICAL: Failed to generate L2 Keys. Bot cannot trade. Error: ${msg}`);
+                  throw new Error(`L2 Handshake Failed: ${msg}`); // Halt startup
               }
           }
 
@@ -297,6 +301,11 @@ export class BotEngine {
                   passphrase: this.config.polymarketApiPassphrase
               };
           }
+      }
+
+      // --- FINAL CHECK ---
+      if (!clobCreds || !clobCreds.secret) {
+          throw new Error("Bot failed to initialize valid trading credentials. Please try 'Revoke' then 'Start' again.");
       }
 
       // --- BUILDER PROGRAM INTEGRATION ---
@@ -376,7 +385,7 @@ export class BotEngine {
           const apiKeyToUse = this.config.geminiApiKey || process.env.API_KEY;
 
           if (apiKeyToUse) {
-            await this.addLog('info', '🤖 AI Analyzing signal...');
+            await this.addLog('info', `[SIGNAL] ${signal.side} ${signal.outcome} @ ${signal.price} ($${signal.sizeUsd.toFixed(0)}) from ${signal.trader.slice(0,4)}`);
             const analysis = await aiAgent.analyzeTrade(
               `Market: ${signal.marketId}`,
               signal.side,
@@ -423,10 +432,10 @@ export class BotEngine {
                             const entry = this.activePositions[posIndex];
                             const yieldPercent = (signal.price - entry.entryPrice) / entry.entryPrice;
                             realPnl = entry.sizeUsd * yieldPercent; 
-                            await this.addLog('info', `Realized PnL: $${realPnl.toFixed(2)} (${(yieldPercent*100).toFixed(1)}%)`);
+                            await this.addLog('success', `✅ Realized PnL: $${realPnl.toFixed(2)} (${(yieldPercent*100).toFixed(1)}%)`);
                             this.activePositions.splice(posIndex, 1);
                         } else {
-                            await this.addLog('warn', `Closing tracked position (Entry lost or manual). PnL set to 0.`);
+                            // await this.addLog('warn', `Closing tracked position (Entry lost or manual). PnL set to 0.`);
                             realPnl = 0; 
                         }
                     }
@@ -485,7 +494,7 @@ export class BotEngine {
       await this.monitor.start(this.config.startCursor);
       this.watchdogTimer = setInterval(() => this.checkAutoTp(), 10000) as unknown as NodeJS.Timeout;
       
-      await this.addLog('success', 'Bot Engine Active & Monitoring 24/7');
+      // await this.addLog('success', 'Bot Engine Active & Monitoring 24/7');
 
     } catch (e: any) {
       this.isRunning = false;
