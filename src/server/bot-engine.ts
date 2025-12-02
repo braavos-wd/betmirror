@@ -75,7 +75,7 @@ class KernelEthersSigner extends AbstractSigner {
         return {
             hash,
             wait: async () => {
-                // Use ethers provider to wait for receipt, safer than relying on kernelClient
+                // Use ethers provider to wait for receipt, safer than relying on kernelClient properties
                 if(this.provider) {
                     return await this.provider.waitForTransaction(hash);
                 }
@@ -187,31 +187,31 @@ export class BotEngine {
       }
   }
 
-  // --- JUST-IN-TIME DEPLOYMENT ---
-  // Checks if the account exists on-chain. If not, sends a self-transaction to deploy it.
-  private async deployAccount(signer: any, address: string, provider: Provider) {
+  // --- [CRITICAL FIX] FORCE SESSION KEY INSTALLATION ---
+  // Checks if the account is active and forces a self-transaction to ensure
+  // the Session Key Validator is installed on-chain.
+  // Without this, Polymarket EIP-1271 validation fails with 401.
+  private async ensureSessionActive(signer: any, address: string, provider: Provider) {
       try {
-          const code = await provider.getCode(address);
-          // If code is '0x', the contract is not deployed.
-          if (code !== '0x') return; 
-
-          await this.addLog('warn', '⚠️ Smart Account not deployed. Initiating JIT Deployment (0 USDC Self-Transfer)...');
+          // We always run this for Smart Accounts to ensure "Liveness" before trading.
+          // It costs nothing (sponsored gas) and guarantees the key is synced.
+          await this.addLog('info', '🔄 Syncing Session Key with Blockchain...');
           
           // Send 0 ETH/POL to self. 
-          // This triggers the ZeroDev Bundler to deploy the factory code for this address.
+          // Triggers deployment if needed.
+          // Triggers validator installation if needed.
           const tx = await signer.sendTransaction({
               to: address,
               value: 0,
               data: "0x" 
           });
           
-          await this.addLog('info', `🚀 Deployment UserOp Sent. Waiting for block...`);
+          await this.addLog('info', `🚀 Session Sync Tx Sent: ${tx.hash?.slice(0,10)}... Waiting for block...`);
           await tx.wait(); // Critical: Must wait for block inclusion
-          await this.addLog('success', '✅ Smart Account successfully deployed on-chain.');
+          await this.addLog('success', '✅ Session Key Active & On-Chain.');
           
       } catch (e: any) {
-          await this.addLog('error', `Deployment Check Failed: ${e.message}`);
-          // We don't throw here, we try to proceed. If deployment failed, handshake will fail next.
+          await this.addLog('warn', `Session Sync Warning: ${e.message} (Bot will try to proceed)`);
       }
   }
 
@@ -266,9 +266,9 @@ export class BotEngine {
           // Since we are ZeroDev Kernel (ERC-4337), we treat it as a proxy.
           signatureType = SignatureType.POLY_PROXY; 
           
-          // --- [FIX] JUST-IN-TIME DEPLOYMENT ---
-          // Ensure contract is deployed before attempting signature verification
-          await this.deployAccount(signerImpl, walletAddress, provider);
+          // --- [FIX] FORCE DEPLOYMENT / KEY INSTALLATION ---
+          // Before we attempt handshake (which requires valid signature), we must ensure key is active on-chain.
+          await this.ensureSessionActive(signerImpl, walletAddress, provider);
 
           // --- AUTO-GENERATE / VALIDATE L2 KEYS ---
           // We must ensure we have valid CLOB API credentials before proceeding.

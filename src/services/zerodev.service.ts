@@ -167,6 +167,7 @@ export class ZeroDevService {
              });
 
              // Send 0 ETH/POL to self to trigger deployment
+             // cast as any to bypass strict kzg types in some viem versions
              const deployHash = await kernelClient.sendTransaction({
                  to: masterAccount.address,
                  value: BigInt(0),
@@ -176,7 +177,7 @@ export class ZeroDevService {
              console.log(`🚀 Deployment UserOp Sent: ${deployHash}`);
              console.log("   Waiting for block inclusion...");
              
-             // FIX: Use publicClient to wait for receipt as kernelClient might not expose it
+             // Use public client to wait for receipt
              await this.publicClient.waitForTransactionReceipt({ hash: deployHash });
              console.log("✅ Account Successfully Deployed!");
              
@@ -310,10 +311,11 @@ export class ZeroDevService {
 
       console.log("UserOp Hash:", userOpHash);
       
-      const receipt = await kernelClient.waitForUserOperationReceipt({
+      // Use public client to wait for receipt
+      const receipt = await this.publicClient.waitForTransactionReceipt({
         hash: userOpHash,
       });
 
-      return receipt.receipt.transactionHash;
+      return receipt.transactionHash;
   }
 }
