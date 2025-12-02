@@ -236,14 +236,19 @@ export class BotEngine {
           signatureType = SignatureType.POLY_PROXY; 
           
           // --- AUTO-GENERATE L2 KEYS IF MISSING ---
-          // Smart Accounts don't come with L2 keys. We must generate them via signature once and save them.
-          // CRITICAL FIX: Strict checking for Key AND Secret. If secret is missing, we must regen.
+          // Strict check: Old bots might have an empty object or missing secret.
           const dbCreds = this.config.l2ApiCredentials;
-          if (dbCreds && dbCreds.key && dbCreds.secret && dbCreds.passphrase) {
+          
+          const hasValidCreds = dbCreds 
+              && typeof dbCreds.key === 'string' && dbCreds.key.length > 0
+              && typeof dbCreds.secret === 'string' && dbCreds.secret.length > 0
+              && typeof dbCreds.passphrase === 'string' && dbCreds.passphrase.length > 0;
+
+          if (hasValidCreds) {
               clobCreds = dbCreds;
               await this.addLog('success', '[DIAGNOSTIC] L2 Trading Credentials Loaded successfully from DB.');
           } else {
-              await this.addLog('info', '⚙️ Generating new L2 Trading Credentials for Smart Account...');
+              await this.addLog('warn', '⚠️ Missing or Invalid L2 Creds. Initiating Regeneration Handshake...');
               try {
                   // We create a temp client just to perform the handshake/signing
                   const tempClient = new ClobClient(
@@ -251,22 +256,27 @@ export class BotEngine {
                       Chain.POLYGON,
                       signerImpl,
                       undefined,
-                      signatureType as any // Cast to any to satisfy TS if ClobClient expects the library enum
+                      signatureType as any 
                   );
                   
                   // Sign a message on-chain (via Session Key) to derive the API Key
                   const newCreds = await tempClient.createApiKey();
+                  
+                  if (!newCreds || !newCreds.key || !newCreds.secret) {
+                      throw new Error("CLOB returned empty credentials during handshake.");
+                  }
+
                   clobCreds = newCreds;
                   
-                  // Persist to DB so we don't re-gen every time (which invalidates old ones)
+                  // Persist to DB immediately
                   await User.findOneAndUpdate(
                       { address: this.config.userId },
                       { "proxyWallet.l2ApiCredentials": newCreds }
                   );
                   
-                  await this.addLog('success', '✅ [DIAGNOSTIC] L2 CLOB Security API Key Created & Saved.');
+                  await this.addLog('success', '✅ [RECOVERY] New L2 CLOB Security API Key Created & Saved.');
               } catch (e: any) {
-                  throw new Error(`Failed to auto-generate L2 Keys: ${e.message}`);
+                  throw new Error(`Failed to auto-generate L2 Keys: ${e.message}. Bot cannot trade.`);
               }
           }
 
