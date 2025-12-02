@@ -239,7 +239,7 @@ export class BotEngine {
           // Smart Accounts don't come with L2 keys. We must generate them via signature once and save them.
           if (this.config.l2ApiCredentials) {
               clobCreds = this.config.l2ApiCredentials;
-              await this.addLog('info', '🔑 Loaded Existing L2 Trading Credentials');
+              await this.addLog('success', '[DIAGNOSTIC] L2 Trading Credentials Loaded successfully from DB.');
           } else {
               await this.addLog('info', '⚙️ Generating new L2 Trading Credentials for Smart Account...');
               try {
@@ -262,7 +262,7 @@ export class BotEngine {
                       { "proxyWallet.l2ApiCredentials": newCreds }
                   );
                   
-                  await this.addLog('success', '✅ L2 Credentials Generated & Secured.');
+                  await this.addLog('success', '✅ [DIAGNOSTIC] L2 CLOB Security API Key Created & Saved.');
               } catch (e: any) {
                   throw new Error(`Failed to auto-generate L2 Keys: ${e.message}`);
               }
@@ -313,6 +313,11 @@ export class BotEngine {
       );
 
       this.client = Object.assign(clobClient, { wallet: signerImpl });
+      
+      // Log successful usage if we have credentials
+      if (clobCreds) {
+           await this.addLog('success', '[DIAGNOSTIC] CLOB Client authenticated with L2 Credentials.');
+      }
 
       await this.addLog('success', `Bot Online: ${walletAddress.slice(0,6)}...`);
 
@@ -355,7 +360,10 @@ export class BotEngine {
           let aiReasoning = "Legacy Mode (No AI Key)";
           let riskScore = 5;
 
-          if (this.config.geminiApiKey && this.config.geminiApiKey.length > 10) {
+          // Check for User API Key or System API Key
+          const apiKeyToUse = this.config.geminiApiKey || process.env.API_KEY;
+
+          if (apiKeyToUse) {
             await this.addLog('info', '🤖 AI Analyzing signal...');
             const analysis = await aiAgent.analyzeTrade(
               `Market: ${signal.marketId}`,
@@ -363,12 +371,14 @@ export class BotEngine {
               signal.outcome,
               signal.sizeUsd,
               signal.price,
-              this.config.geminiApiKey,
-              this.config.riskProfile
+              this.config.riskProfile,
+              apiKeyToUse // Pass dynamic key
             );
             shouldExecute = analysis.shouldCopy;
             aiReasoning = analysis.reasoning;
             riskScore = analysis.riskScore;
+          } else {
+             await this.addLog('warn', '⚠️ No Gemini API Key found. Skipping AI Analysis.');
           }
 
           if (shouldExecute) {

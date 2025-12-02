@@ -232,38 +232,43 @@ app.get('/api/stats/global', async (req: any, res: any) => {
 
         // External Builder API Stats (Polymarket)
         let builderStats: BuilderVolumeData | null = null;
-        let builderHistory: BuilderVolumeData[] = [];
-        let ecosystemVolume = 112005785; // Fallback ecosystem volume
+        let leaderboard: BuilderVolumeData[] = [];
+        let ecosystemVolume = 0;
+        const myBuilderId = ENV.builderId || 'BetMirror'; 
 
         try {
-            // 1. Get Specific Builder Stats (Time-Series /volume)
-            const builderId = ENV.builderId || 'BetMirror'; 
-            const url = `https://data-api.polymarket.com/v1/builders/volume?builder=${builderId}&timePeriod=ALL`;
-            const response = await axios.get<BuilderVolumeData[]>(url, { timeout: 4000 });
-            
-            if (Array.isArray(response.data) && response.data.length > 0) {
-                // Robust Sort: Newest First (Descending by Date)
-                const sortedByDate = [...response.data].sort((a, b) => {
-                    // Fallback to 0 if dt is missing, though volume endpoint should have it
-                    return new Date(b.dt || 0).getTime() - new Date(a.dt || 0).getTime();
-                });
-
-                // "Current" = The latest entry (Today/Yesterday)
-                builderStats = sortedByDate[0]; 
-                
-                // "History" = Latest 14 days, reversed to be Chronological (Oldest -> Newest) for Chart
-                builderHistory = sortedByDate.slice(0, 14).reverse();
-            }
-
-            // 2. Get Ecosystem Leaderboard (Aggregated /leaderboard)
-            const lbUrl = `https://data-api.polymarket.com/v1/builders/leaderboard?timePeriod=ALL`;
+            // Fetch Global Leaderboard (Top 50)
+            // Reduced from 100 to 50 to avoid clutter
+            const lbUrl = `https://data-api.polymarket.com/v1/builders/leaderboard?timePeriod=ALL&limit=50`;
             const lbResponse = await axios.get<BuilderVolumeData[]>(lbUrl, { timeout: 4000 });
-             if (Array.isArray(lbResponse.data)) {
-                 ecosystemVolume = lbResponse.data.reduce((acc, curr) => acc + curr.volume, 0);
-             }
+            
+            if (Array.isArray(lbResponse.data)) {
+                 leaderboard = lbResponse.data;
+                 
+                 // 1. Calculate Total Ecosystem Volume from top 50
+                 ecosystemVolume = leaderboard.reduce((acc, curr) => acc + (curr.volume || 0), 0);
+                 
+                 // 2. Find OUR Builder Profile in the haystack
+                 const myEntry = leaderboard.find(b => b.builder.toLowerCase() === myBuilderId.toLowerCase());
+                 
+                 if (myEntry) {
+                     builderStats = myEntry;
+                 } else {
+                     // Not ranked yet. Return empty shell so frontend knows we checked.
+                     builderStats = {
+                         builder: myBuilderId,
+                         rank: 'Unranked',
+                         volume: 0,
+                         activeUsers: 0,
+                         verified: false,
+                         builderLogo: ''
+                     };
+                 }
+            }
         } catch (e) {
-            // Graceful fail - frontend will show "Data Pending"
             console.warn("Failed to fetch external builder stats:", e instanceof Error ? e.message : 'Unknown');
+            // Fallback if API fails
+            builderStats = { builder: myBuilderId, rank: 'Error', volume: 0, activeUsers: 0, verified: false };
         }
 
         res.json({
@@ -278,9 +283,9 @@ app.get('/api/stats/global', async (req: any, res: any) => {
             },
             builder: {
                 current: builderStats,
-                history: builderHistory,
-                builderId: ENV.builderId || 'BetMirror',
-                ecosystemVolume // Total volume of all builders
+                history: leaderboard, // Return whatever we got (max 50)
+                builderId: myBuilderId,
+                ecosystemVolume
             }
         });
     } catch (e) {
@@ -323,7 +328,7 @@ app.post('/api/bot/start', async (req: any, res: any) => {
         walletConfig: user.proxyWallet,
         userAddresses: Array.isArray(userAddresses) ? userAddresses : userAddresses.split(',').map((s: string) => s.trim()),
         rpcUrl,
-        geminiApiKey,
+        geminiApiKey, // Explicit user-provided key
         multiplier: Number(multiplier),
         riskProfile,
         autoTp: autoTp ? Number(autoTp) : undefined,

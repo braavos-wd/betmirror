@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 
 export interface AnalysisResult {
@@ -17,20 +18,22 @@ export class AiAgentService {
     outcome: "YES" | "NO",
     size: number,
     price: number,
-    apiKey: string,
-    riskProfile: RiskProfile = 'balanced'
+    riskProfile: RiskProfile = 'balanced',
+    apiKey?: string // Optional Override
   ): Promise<AnalysisResult> {
-    // STRICT: Only use the key provided by the user in the UI. 
-    // Do not look for process.env on the server/client hybrid.
-    if (!apiKey) {
+    
+    // Use provided key, or fall back to process.env, or fail
+    const keyToUse = apiKey || process.env.API_KEY;
+
+    if (!keyToUse) {
         return {
             shouldCopy: false,
-            reasoning: "Missing Gemini API Key. Please configure it in the Vault.",
+            reasoning: "Missing Gemini API Key. Please add it in settings or env.",
             riskScore: 0
         };
     }
 
-    const ai = new GoogleGenAI({ apiKey });
+    const ai = new GoogleGenAI({ apiKey: keyToUse });
 
     const systemInstruction = `You are a specialized Risk Analyst Agent for a prediction market trading bot. 
     Your Risk Profile is: ${riskProfile.toUpperCase()}.

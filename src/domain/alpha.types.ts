@@ -51,9 +51,9 @@ export interface IRegistryService {
 export interface BuilderVolumeData {
     dt?: string; // Optional: Only present in /volume time-series endpoint
     builder: string;
-    builderLogo: string;
+    builderLogo?: string; // Optional, present in leaderboard
     verified: boolean;
     volume: number;
     activeUsers: number;
-    rank: string;
+    rank?: string; // Present in leaderboard
 }
