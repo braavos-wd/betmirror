@@ -15,6 +15,7 @@ export interface BridgeQuoteParams {
   fromChainId: number;
   fromTokenAddress: string;
   fromAmount: string; // Atomic units
+  fromAddress?: string; 
   toChainId: number;
   toTokenAddress: string;
   toAddress: string; // The Proxy/Smart Account Address

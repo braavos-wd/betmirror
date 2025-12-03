@@ -1037,6 +1037,7 @@ const App = () => {
               fromChainId: bridgeFromChain,
               fromTokenAddress: fromToken, 
               fromAmount: rawAmount, 
+              fromAddress: userAddress,
               toChainId: 137, // Polygon
               toTokenAddress: USDC_POLYGON, // USDC
               toAddress: proxyAddress
