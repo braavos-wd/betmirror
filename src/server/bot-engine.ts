@@ -1,3 +1,4 @@
+
 import { createPolymarketClient } from '../infrastructure/clob-client.factory.js';
 import { TradeMonitorService } from '../services/trade-monitor.service.js';
 import { TradeExecutorService } from '../services/trade-executor.service.js';
@@ -15,7 +16,7 @@ import { Wallet, AbstractSigner, Provider, JsonRpcProvider, TransactionRequest, 
 import { BotLog, User } from '../database/index.js';
 import { BuilderConfig, BuilderApiKeyCreds } from '@polymarket/builder-signing-sdk';
 import { getMarket } from '../utils/fetch-data.util.js';
-import { getUsdBalanceApprox } from '../utils/get-balance.util.js';
+import { getUsdBalanceApprox, getPolBalance } from '../utils/get-balance.util.js';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -202,20 +203,48 @@ export class BotEngine {
   // Once funds arrive, it sends a self-transaction to initialize the chain state
   // and THEN attempts the Handshake.
   private async waitForFunds(wallet: Wallet | KernelEthersSigner, usdcAddress: string): Promise<void> {
-      const address = await wallet.getAddress();
-      let isFunded = false;
+      // Native USDC Address (for warning users who bridge wrong token)
+      const NATIVE_USDC = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
+
+      const checkBalances = async () => {
+          try {
+              // Check Bridged USDC (USDC.e) - Required
+              const balance = await getUsdBalanceApprox(wallet as any, usdcAddress);
+              
+              // Check Native USDC - Informational
+              let nativeBalance = 0;
+              try {
+                  nativeBalance = await getUsdBalanceApprox(wallet as any, NATIVE_USDC);
+              } catch(e) { /* ignore */ }
+
+              // Check POL - Informational
+              let polBalance = 0;
+              try {
+                polBalance = await getPolBalance(wallet as any);
+              } catch(e) { /* ignore */ }
+
+              await this.addLog('info', `💰 Balance Scan: ${balance.toFixed(2)} USDC.e | ${nativeBalance.toFixed(2)} USDC (Native) | ${polBalance.toFixed(4)} POL`);
+
+              // Valid if we have at least $0.50 bridged USDC
+              if (balance >= 0.5) { 
+                  return true;
+              }
+              
+              if (nativeBalance >= 1.0 && balance < 0.5) {
+                   await this.addLog('warn', `⚠️ Found Native USDC ($${nativeBalance}) but no Bridged USDC.e. Polymarket requires Bridged USDC.e (0x2791...). Please swap/bridge.`);
+              }
+
+          } catch (e: any) { 
+              console.error("Balance check error:", e);
+              await this.addLog('error', `Balance Check Failed: ${e.message || 'RPC Error'}`);
+          }
+          return false;
+      };
 
       // Initial Check
-      try {
-          // We cast wallet to any because getUsdBalanceApprox expects a standard Ethers Wallet, 
-          // but KernelEthersSigner implements the necessary provider interface.
-          const balance = await getUsdBalanceApprox(wallet as any, usdcAddress);
-          if (balance >= 1.0) isFunded = true;
-      } catch (e) { /* ignore */ }
+      if (await checkBalances()) return;
 
-      if (isFunded) return;
-
-      await this.addLog('warn', '💰 Account Empty. Waiting for deposit to initialize...');
+      await this.addLog('warn', '💰 Account Empty (USDC.e < 0.50). Waiting for funds...');
       
       return new Promise((resolve) => {
           const checkInterval = setInterval(async () => {
@@ -223,15 +252,14 @@ export class BotEngine {
                  clearInterval(checkInterval);
                  return;
              }
-             try {
-                 const balance = await getUsdBalanceApprox(wallet as any, usdcAddress);
-                 if (balance >= 1.0) {
-                     clearInterval(checkInterval);
-                     await this.addLog('success', `funds detected ($${balance.toFixed(2)}). Initializing Bot...`);
-                     resolve();
-                 }
-             } catch (e) { /* ignore */ }
-          }, 30000); // Check every 30s
+             
+             const funded = await checkBalances();
+             if (funded) {
+                 clearInterval(checkInterval);
+                 await this.addLog('success', `✅ Funds detected. Initializing Bot...`);
+                 resolve();
+             }
+          }, 15000); // Check every 15s
       });
   }
 
@@ -246,8 +274,9 @@ export class BotEngine {
           await tx.wait(); 
           await this.addLog('success', '✅ Smart Account Deployed & Key Active.');
       } catch (e: any) {
-          // It might already be active, so we proceed cautiously
-          console.error("Activation Tx Note:", e.message);
+          // It might already be active, or paymaster might have handled it differently
+          // We log but proceed cautiously as handshakes often work even if this "explicit" activation hiccups
+          console.log("Activation Tx Note:", e.message);
       }
   }
 
