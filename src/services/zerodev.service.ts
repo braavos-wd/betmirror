@@ -33,6 +33,9 @@ const CHAIN = polygon;
 // Default Public RPC (Polygon)
 const PUBLIC_RPC = "https://polygon-rpc.com";
 
+// POLYGON BRIDGED USDC (USDC.e) - The gas token
+const GAS_TOKEN_ADDRESS = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
+
 const USDC_ABI = parseAbi([
   "function transfer(address to, uint256 amount) returns (bool)"
 ]);
@@ -178,7 +181,10 @@ export class ZeroDevService {
       client: this.publicClient as any,
       paymaster: {
         getPaymasterData(userOperation) {
-          return paymasterClient.sponsorUserOperation({ userOperation });
+          return paymasterClient.sponsorUserOperation({ 
+            userOperation,
+            gasToken: GAS_TOKEN_ADDRESS // <--- FORCE USDC GAS PAYMENT
+          });
         },
       },
     });
@@ -226,7 +232,10 @@ export class ZeroDevService {
         client: this.publicClient as any,
         paymaster: {
           getPaymasterData(userOperation) {
-            return paymasterClient.sponsorUserOperation({ userOperation });
+            return paymasterClient.sponsorUserOperation({ 
+                userOperation,
+                gasToken: GAS_TOKEN_ADDRESS // <--- FORCE USDC GAS PAYMENT
+            });
           },
         },
       });

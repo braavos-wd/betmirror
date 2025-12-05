@@ -274,9 +274,11 @@ export class BotEngine {
           await tx.wait(); 
           await this.addLog('success', '✅ Smart Account Deployed & Key Active.');
       } catch (e: any) {
-          // It might already be active, or paymaster might have handled it differently
-          // We log but proceed cautiously as handshakes often work even if this "explicit" activation hiccups
+          // Enhanced Error Logging for Gas/Paymaster Issues
           console.log("Activation Tx Note:", e.message);
+          if (e.message.includes("AA31") || e.message.includes("paymaster") || e.message.includes("gas")) {
+              await this.addLog('warn', '⚠️ Paymaster Warning: Gas sponsorship failed. Please deposit ~1 POL to your Smart Account to ensure smooth operation.');
+          }
       }
   }
 
