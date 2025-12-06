@@ -1,5 +1,17 @@
+
 import fs from 'fs';
 import path from 'path';
+
+// --- CONSTANTS ---
+// Polygon Mainnet Chain ID
+export const POLYGON_CHAIN_ID = 137;
+
+// STRICT TOKEN DEFINITIONS
+export const TOKENS = {
+    POL: '0x0000000000000000000000000000000000000000', // Native Gas Token
+    USDC_NATIVE: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // Circle Standard (NOT USED BY POLYMARKET)
+    USDC_BRIDGED: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174' // Polymarket Standard (USDC.e)
+};
 
 export type RuntimeEnv = {
   userAddresses: string[];
@@ -20,11 +32,9 @@ export type RuntimeEnv = {
   builderApiKey?: string;
   builderApiSecret?: string;
   builderApiPassphrase?: string;
-  
-  // Builder Profile ID for Stats (e.g. "BetMirror")
   builderId?: string;
   
-  // The Global Registry (The "Backend" that tracks who listed what)
+  // The Global Registry
   registryApiUrl: string;
 
   // Revenue & Admin
@@ -42,15 +52,15 @@ export type RuntimeEnv = {
   twilioFromNumber?: string;
   userPhoneNumber?: string;
 
-  // AA
+  // AA - Account Abstraction
   zeroDevRpc: string;
+  zeroDevPaymasterRpc?: string;
   zeroDevProjectId?: string;
-  zeroDevPaymasterRpc?: string; // NEW: Specific RPC for Self-Funded Paymaster
   
-  // Li.Fi Monetization & Config
+  // Li.Fi
   lifiIntegrator: string;
   lifiApiKey?: string;
-  solanaRpcUrl?: string; // NEW: Private Solana RPC for Bridging
+  solanaRpcUrl: string;
 
   // Database
   mongoUri: string;
@@ -81,7 +91,6 @@ export function loadEnv(): RuntimeEnv {
           console.log(`📂 Loading system wallets from ${fileName}...`);
           try {
               const content = fs.readFileSync(absolutePath, 'utf-8');
-              // Split by newline OR comma, trim, and filter for valid EVM addresses
               return content
                   .split(/[\n,]+/) 
                   .map(s => s.trim())
@@ -97,45 +106,49 @@ export function loadEnv(): RuntimeEnv {
   let userAddresses = parseList(process.env.USER_ADDRESSES);
   const fileAddresses = loadWalletsFromFile();
   
-  // Merge .env addresses with file addresses and remove duplicates
   if (fileAddresses.length > 0) {
       userAddresses = Array.from(new Set([...userAddresses, ...fileAddresses]));
       console.log(`✅ Loaded ${userAddresses.length} unique system wallets.`);
   }
 
-  // Use the provided Atlas URI as the default if env var is missing
   const defaultMongoUri = 'mongodb+srv://limeikenji_db_user:lT4HIyBhbui8vFQr@cluster0.bwk2i6s.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0';
+
+  // Fix ZeroDev RPC URL to always be V3
+  let zdRpc = process.env.ZERODEV_RPC || 'https://rpc.zerodev.app/api/v3/b9f9b537-8525-4b18-9cfe-9a7a6992b6df/chain/137';
+  if (zdRpc.includes('/v2/')) {
+      zdRpc = zdRpc.replace('/v2/bundler/', '/v3/').replace('https://rpc.zerodev.app/api/v3/', 'https://rpc.zerodev.app/api/v3/') + '/chain/137';
+  }
 
   const env: RuntimeEnv = {
     userAddresses,
     proxyWallet: process.env.PUBLIC_KEY || '', 
     privateKey: process.env.PRIVATE_KEY || '',
     
+    // Default high-performance Polygon RPC
     rpcUrl: process.env.RPC_URL || 'https://little-thrilling-layer.matic.quiknode.pro/378fe82ae3cb5d38e4ac79c202990ad508e1c4c6',
+    
     fetchIntervalSeconds: Number(process.env.FETCH_INTERVAL ?? 1),
     tradeMultiplier: Number(process.env.TRADE_MULTIPLIER ?? 1.0),
     retryLimit: Number(process.env.RETRY_LIMIT ?? 3),
     aggregationEnabled: String(process.env.TRADE_AGGREGATION_ENABLED ?? 'false') === 'true',
     aggregationWindowSeconds: Number(process.env.TRADE_AGGREGATION_WINDOW_SECONDS ?? 300),
     
-    // FIX: Updated to Polygon Bridged USDC (USDC.e) for Polymarket compatibility
-    // This is the critical "Legacy" USDC used by the CLOB
-    usdcContractAddress: process.env.USDC_CONTRACT_ADDRESS || '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
+    // FORCE USE OF BRIDGED USDC.e
+    usdcContractAddress: TOKENS.USDC_BRIDGED,
     
     // Trade API Keys
     polymarketApiKey: process.env.POLYMARKET_API_KEY,
     polymarketApiSecret: process.env.POLYMARKET_API_SECRET,
     polymarketApiPassphrase: process.env.POLYMARKET_API_PASSPHRASE,
     
-    // Builder Program Keys (Attribution)
+    // Builder Program Keys
     builderApiKey: process.env.POLY_BUILDER_API_KEY,
     builderApiSecret: process.env.POLY_BUILDER_SECRET,
     builderApiPassphrase: process.env.POLY_BUILDER_PASSPHRASE,
     builderId: process.env.POLY_BUILDER_ID || 'BetMirror',
     
     registryApiUrl: process.env.REGISTRY_API_URL || 'http://localhost:3000/api',
-
-    adminRevenueWallet: process.env.ADMIN_REVENUE_WALLET || '0xAdminRevenueWalletHere',
+    adminRevenueWallet: process.env.ADMIN_REVENUE_WALLET || '0x0000000000000000000000000000000000000000',
 
     // Automation
     mainWalletAddress: process.env.MAIN_WALLET_ADDRESS,
@@ -150,9 +163,9 @@ export function loadEnv(): RuntimeEnv {
     userPhoneNumber: process.env.USER_PHONE_NUMBER,
 
     // AA
-    zeroDevRpc: process.env.ZERODEV_RPC || 'https://rpc.zerodev.app/api/v2/bundler/b9f9b537-8525-4b18-9cfe-9a7a6992b6df',
+    zeroDevRpc: zdRpc,
+    zeroDevPaymasterRpc: process.env.ZERODEV_PAYMASTER_RPC || zdRpc, 
     zeroDevProjectId: process.env.ZERODEV_PROJECT_ID,
-    zeroDevPaymasterRpc: process.env.ZERODEV_PAYMASTER_RPC,
     
     // Li.Fi
     lifiIntegrator: process.env.LIFI_INTEGRATOR || 'BetMirror',
