@@ -196,9 +196,11 @@ export class ZeroDevService {
   }
 
   /**
-   * CLIENT SIDE: Trustless Withdrawal (with Paymaster Support)
+   * CLIENT SIDE: Trustless Withdrawal
+   * Handles both ERC20 (USDC) and Native (POL) withdrawals.
+   * Attempts to use Paymaster first, falls back to native gas if paymaster fails.
    */
-  async withdrawFunds(ownerWalletClient: WalletClient, smartAccountAddress: string, toAddress: string, amount: bigint, usdcAddress: string) {
+  async withdrawFunds(ownerWalletClient: WalletClient, smartAccountAddress: string, toAddress: string, amount: bigint, tokenAddress: string) {
       console.log("Initiating Trustless Withdrawal...");
       
       // 1. Create the Validator using the Owner's Wallet
@@ -218,55 +220,93 @@ export class ZeroDevService {
         address: smartAccountAddress as Hex,
       });
       
-      // 3. Create Paymaster Client (CRITICAL: Restored for gas sponsorship)
+      // 3. Create Paymaster Client
       const paymasterClient = createZeroDevPaymasterClient({
         chain: CHAIN,
         transport: http(this.rpcUrl),
       });
 
-      // 4. Create Kernel Client with Paymaster Middleware
-      const kernelClient = createKernelAccountClient({
-        account,
-        chain: CHAIN,
-        bundlerTransport: http(this.rpcUrl),
-        client: this.publicClient as any,
-        paymaster: {
-          getPaymasterData(userOperation) {
-            return paymasterClient.sponsorUserOperation({ 
-                userOperation,
-                gasToken: GAS_TOKEN_ADDRESS // <--- FORCE USDC GAS PAYMENT
-            });
-          },
-        },
-      });
-
-      // 5. Encode the USDC transfer call
-      const callData = encodeFunctionData({
-          abi: USDC_ABI,
-          functionName: "transfer",
-          args: [toAddress as Hex, amount]
-      });
-
-      console.log(`Sending UserOp: Transfer ${amount} units of ${usdcAddress} to ${toAddress}`);
-
-      // 6. Send UserOp
-      const userOpHash = await kernelClient.sendUserOperation({
-        callData: await account.encodeCalls([
-          {
-            to: usdcAddress as Hex,
-            value: BigInt(0),
-            data: callData,
-          },
-        ]),
-      } as any);
-
-      console.log("UserOp Hash:", userOpHash);
+      // 4. Detect Token Type (Native vs ERC20)
+      const isNative = tokenAddress === '0x0000000000000000000000000000000000000000';
       
-      // Safe wait for receipt
-      const receipt = await this.publicClient.waitForTransactionReceipt({
-        hash: userOpHash,
-      });
+      let callData: Hex;
+      let value: bigint = BigInt(0);
+      let target: Hex;
 
-      return receipt.transactionHash;
+      if (isNative) {
+          // Native Transfer (POL)
+          callData = "0x"; // No data for native transfer
+          value = amount;
+          target = toAddress as Hex;
+      } else {
+          // ERC20 Transfer (USDC)
+          callData = encodeFunctionData({
+              abi: USDC_ABI,
+              functionName: "transfer",
+              args: [toAddress as Hex, amount]
+          });
+          target = tokenAddress as Hex;
+      }
+
+      console.log(`Sending UserOp: Transfer ${amount} units of ${isNative ? 'POL' : tokenAddress} to ${toAddress}`);
+
+      // 5. Attempt with Paymaster (Gas Token)
+      try {
+          const kernelClient = createKernelAccountClient({
+            account,
+            chain: CHAIN,
+            bundlerTransport: http(this.rpcUrl),
+            client: this.publicClient as any,
+            paymaster: {
+                getPaymasterData(userOperation) {
+                    return paymasterClient.sponsorUserOperation({ 
+                        userOperation,
+                        gasToken: GAS_TOKEN_ADDRESS 
+                    });
+                },
+            },
+          });
+
+          const userOpHash = await kernelClient.sendUserOperation({
+            callData: await account.encodeCalls([
+              {
+                to: target,
+                value: value,
+                data: callData,
+              },
+            ]),
+          } as any);
+
+          console.log("UserOp Hash (Paymaster):", userOpHash);
+          const receipt = await this.publicClient.waitForTransactionReceipt({ hash: userOpHash });
+          return receipt.transactionHash;
+
+      } catch (e: any) {
+          console.warn("Paymaster failed (likely not whitelisted or insufficient USDC). Retrying with Native Gas...", e.message);
+          
+          // 6. Fallback: Standard UserOp (User pays Gas in POL)
+          // Note: User must have POL in the Smart Account for this to work.
+          const kernelClientFallback = createKernelAccountClient({
+            account,
+            chain: CHAIN,
+            bundlerTransport: http(this.rpcUrl),
+            client: this.publicClient as any,
+            // No paymaster middleware = Self Funded
+          });
+
+          const userOpHash = await kernelClientFallback.sendUserOperation({
+            callData: await account.encodeCalls([
+              {
+                to: target,
+                value: value,
+                data: callData,
+              },
+            ]),
+          } as any);
+          
+          console.log("UserOp Hash (Self-Funded):", userOpHash);
+          const receipt = await this.publicClient.waitForTransactionReceipt({ hash: userOpHash });
+          return receipt.transactionHash;
+      }
   }
 }
