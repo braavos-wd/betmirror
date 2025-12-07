@@ -20,15 +20,12 @@ const dbRegistryService = new DbRegistryService();
 // In-Memory Bot Instances (Runtime State)
 const ACTIVE_BOTS = new Map();
 app.use(cors());
-// INCREASED LIMIT: Session keys are large strings
 app.use(express.json({ limit: '10mb' }));
 // --- STATIC FILES (For Production) ---
-// This allows the Node server to serve the React app
 const distPath = path.join(__dirname, '../../dist');
 app.use(express.static(distPath));
 // --- HELPER: Start Bot Instance ---
 async function startUserBot(userId, config) {
-    // Ensure lowercase ID
     const normId = userId.toLowerCase();
     if (ACTIVE_BOTS.has(normId)) {
         ACTIVE_BOTS.get(normId)?.stop();
@@ -43,14 +40,13 @@ async function startUserBot(userId, config) {
             await User.updateOne({ address: normId }, { $push: { cashoutHistory: record } });
         },
         onTradeComplete: async (trade) => {
-            // Save Trade to separate collection
             await Trade.create({
                 userId: normId,
                 marketId: trade.marketId,
                 outcome: trade.outcome,
                 side: trade.side,
                 size: trade.size,
-                executedSize: trade.executedSize || 0, // Save actual size
+                executedSize: trade.executedSize || 0,
                 price: trade.price,
                 pnl: trade.pnl,
                 status: trade.status,
@@ -64,7 +60,6 @@ async function startUserBot(userId, config) {
             await User.updateOne({ address: normId }, { stats });
         },
         onFeePaid: async (event) => {
-            // Find the lister and increment their stats
             const lister = await Registry.findOne({ address: { $regex: new RegExp(`^${event.listerAddress}$`, "i") } });
             if (lister) {
                 lister.copyCount = (lister.copyCount || 0) + 1;
@@ -74,47 +69,18 @@ async function startUserBot(userId, config) {
         }
     });
     ACTIVE_BOTS.set(normId, engine);
-    await engine.start();
+    // Non-blocking start to prevent server stall on funding checks
+    // We catch errors to ensure one bot failing doesn't crash the server
+    engine.start().catch(err => console.error(`[Bot Error] ${normId}:`, err.message));
 }
-// --- SYSTEM: Registry Seeder ---
-// Ensures wallets in .env are listed as "Official" in the Marketplace
-async function seedOfficialWallets() {
-    console.log('🌱 Seeding Official Wallets from Env...');
-    const officials = ENV.userAddresses; // From .env
-    for (const address of officials) {
-        if (!address || address.length < 10)
-            continue;
-        try {
-            // Upsert (Insert or Update)
-            await Registry.findOneAndUpdate({ address: { $regex: new RegExp(`^${address}$`, "i") } }, {
-                address: address,
-                isVerified: true,
-                isSystem: true,
-                listedBy: 'SYSTEM',
-                tags: ['OFFICIAL', 'WHALE'],
-                $setOnInsert: {
-                    listedAt: new Date().toISOString(),
-                    winRate: 0,
-                    totalPnl: 0
-                }
-            }, { upsert: true });
-        }
-        catch (e) {
-            console.error(`Failed to seed ${address}`, e);
-        }
-    }
-    console.log(`✅ Seeded ${officials.length} official wallets.`);
-    // Trigger initial analytics run
-    registryAnalytics.updateAllRegistryStats();
-}
-// --- API ROUTES ---
-// 0. Health Check (For Sliplane/AWS/Docker)
+// ... [Keep existing stats/registry/feedback routes identical] ...
+// 0. Health Check
 app.get('/health', (req, res) => {
     res.status(200).json({
         status: 'ok',
         uptime: process.uptime(),
         activeBots: ACTIVE_BOTS.size,
-        timestamp: new Date().toISOString()
+        timestamp: new Date()
     });
 });
 // 1. Check Status / Init
@@ -146,7 +112,8 @@ app.post('/api/wallet/status', async (req, res) => {
 // 2. Activate Smart Account
 app.post('/api/wallet/activate', async (req, res) => {
     console.log(`[ACTIVATION REQUEST] Received payload for user: ${req.body?.userId}`);
-    const { userId, serializedSessionKey, smartAccountAddress } = req.body;
+    // IMPORTANT: Receive sessionPrivateKey now
+    const { userId, serializedSessionKey, smartAccountAddress, sessionPrivateKey } = req.body;
     if (!userId || !serializedSessionKey || !smartAccountAddress) {
         console.error('[ACTIVATION ERROR] Missing fields:', { userId, hasKey: !!serializedSessionKey, hasAddress: !!smartAccountAddress });
         res.status(400).json({ error: 'Missing activation parameters' });
@@ -157,6 +124,7 @@ app.post('/api/wallet/activate', async (req, res) => {
         type: 'SMART_ACCOUNT',
         address: smartAccountAddress,
         serializedSessionKey: serializedSessionKey,
+        sessionPrivateKey: sessionPrivateKey, // Save this!
         ownerAddress: normId,
         createdAt: new Date().toISOString()
     };
@@ -204,20 +172,16 @@ app.get('/api/stats/global', async (req, res) => {
         const myBuilderId = ENV.builderId || 'BetMirror';
         try {
             // Fetch Global Leaderboard (Top 50)
-            // Reduced limit to 50 for cleaner chart
             const lbUrl = `https://data-api.polymarket.com/v1/builders/leaderboard?timePeriod=ALL&limit=50`;
             const lbResponse = await axios.get(lbUrl, { timeout: 4000 });
             if (Array.isArray(lbResponse.data)) {
                 leaderboard = lbResponse.data;
-                // 1. Calculate Total Ecosystem Volume from top 50
                 ecosystemVolume = leaderboard.reduce((acc, curr) => acc + (curr.volume || 0), 0);
-                // 2. Find OUR Builder Profile in the haystack
                 const myEntry = leaderboard.find(b => b.builder.toLowerCase() === myBuilderId.toLowerCase());
                 if (myEntry) {
                     builderStats = myEntry;
                 }
                 else {
-                    // Not ranked yet. Return empty shell so frontend knows we checked.
                     builderStats = {
                         builder: myBuilderId,
                         rank: 'Unranked',
@@ -231,14 +195,13 @@ app.get('/api/stats/global', async (req, res) => {
         }
         catch (e) {
             console.warn("Failed to fetch external builder stats:", e instanceof Error ? e.message : 'Unknown');
-            // Fallback if API fails
             builderStats = { builder: myBuilderId, rank: 'Error', volume: 0, activeUsers: 0, verified: false };
         }
         res.json({
             internal: {
                 totalUsers: userCount,
-                signalVolume: signalVolume, // Whale Volume
-                executedVolume: executedVolume, // Bot Volume
+                signalVolume: signalVolume,
+                executedVolume: executedVolume,
                 totalTrades: internalTrades,
                 totalRevenue,
                 totalLiquidity,
@@ -246,7 +209,7 @@ app.get('/api/stats/global', async (req, res) => {
             },
             builder: {
                 current: builderStats,
-                history: leaderboard, // Return whatever we got (max 50)
+                history: leaderboard,
                 builderId: myBuilderId,
                 ecosystemVolume
             }
@@ -282,15 +245,15 @@ app.post('/api/bot/start', async (req, res) => {
             res.status(400).json({ error: 'Bot Wallet not activated.' });
             return;
         }
-        // Inject saved L2 credentials if they exist
-        // This allows session continuity without re-generating keys on every start
+        // --- EXTRACT L2 CREDENTIALS FROM DB ---
+        // This is crucial for the "Use API Keys" step
         const l2Creds = user.proxyWallet.l2ApiCredentials;
         const config = {
             userId: normId,
             walletConfig: user.proxyWallet,
             userAddresses: Array.isArray(userAddresses) ? userAddresses : userAddresses.split(',').map((s) => s.trim()),
             rpcUrl,
-            geminiApiKey, // Explicit user-provided key
+            geminiApiKey,
             multiplier: Number(multiplier),
             riskProfile,
             autoTp: autoTp ? Number(autoTp) : undefined,
@@ -299,9 +262,10 @@ app.post('/api/bot/start', async (req, res) => {
             autoCashout: autoCashout,
             activePositions: user.activePositions || [],
             stats: user.stats,
-            zeroDevRpc: process.env.ZERODEV_RPC,
-            zeroDevPaymasterRpc: process.env.ZERODEV_PAYMASTER_RPC, // Pass Paymaster RPC from Server Env
-            l2ApiCredentials: l2Creds, // Pass Credentials to Engine
+            // PASS ENV VARS
+            zeroDevRpc: ENV.zeroDevRpc,
+            // PASS CREDENTIALS
+            l2ApiCredentials: l2Creds,
             startCursor: Math.floor(Date.now() / 1000)
         };
         await startUserBot(normId, config);
@@ -333,7 +297,6 @@ app.get('/api/bot/status/:userId', async (req, res) => {
     try {
         const tradeHistory = await Trade.find({ userId: normId }).sort({ timestamp: -1 }).limit(50).lean();
         const user = await User.findOne({ address: normId }).lean();
-        // Fetch Logs from DB instead of memory to ensure persistence across restarts
         const dbLogs = await BotLog.find({ userId: normId }).sort({ timestamp: -1 }).limit(100).lean();
         const formattedLogs = dbLogs.map(l => ({
             id: l._id.toString(),
@@ -361,7 +324,6 @@ app.get('/api/bot/status/:userId', async (req, res) => {
 // 8. Registry Routes
 app.get('/api/registry', async (req, res) => {
     try {
-        // Sort System wallets first, then high winrate
         const list = await Registry.find().sort({ isSystem: -1, winRate: -1 }).lean();
         res.json(list);
     }
@@ -399,7 +361,6 @@ app.post('/api/registry', async (req, res) => {
             listedAt: new Date().toISOString(),
             winRate: 0, totalPnl: 0, tradesLast30d: 0, followers: 0, copyCount: 0, copyProfitGenerated: 0
         });
-        // Trigger background update for new listing
         registryAnalytics.analyzeWallet(address);
         res.json({ success: true, profile });
     }
@@ -407,7 +368,7 @@ app.post('/api/registry', async (req, res) => {
         res.status(500).json({ error: e.message });
     }
 });
-// PROXY: Get raw trades for modal (frontend calls this)
+// PROXY: Get raw trades
 app.get('/api/proxy/trades/:address', async (req, res) => {
     const { address } = req.params;
     try {
@@ -438,18 +399,14 @@ app.post('/api/bridge/record', async (req, res) => {
     }
     const normId = userId.toLowerCase();
     try {
-        await BridgeTransaction.findOneAndUpdate({ userId: normId, bridgeId: transaction.id }, {
-            userId: normId,
-            bridgeId: transaction.id,
-            ...transaction
-        }, { upsert: true });
+        await BridgeTransaction.findOneAndUpdate({ userId: normId, bridgeId: transaction.id }, { userId: normId, bridgeId: transaction.id, ...transaction }, { upsert: true });
         res.json({ success: true });
     }
     catch (e) {
         res.status(500).json({ error: 'DB Error' });
     }
 });
-// 10. Direct Deposit Record (for stats)
+// 10. Direct Deposit Record
 app.post('/api/deposit/record', async (req, res) => {
     const { userId, amount, txHash } = req.body;
     if (!userId || !amount || !txHash) {
@@ -465,11 +422,9 @@ app.post('/api/deposit/record', async (req, res) => {
         res.json({ success: true });
     }
     catch (e) {
-        // Duplicate key error means already recorded
         res.json({ success: true, exists: true });
     }
 });
-// --- SPA Fallback ---
 app.get('*', (req, res) => {
     res.sendFile(path.join(distPath, 'index.html'));
 });
@@ -483,7 +438,7 @@ async function restoreBots() {
             if (user.activeBotConfig && user.proxyWallet) {
                 const lastTrade = await Trade.findOne({ userId: user.address }).sort({ timestamp: -1 });
                 const lastTime = lastTrade ? Math.floor(lastTrade.timestamp.getTime() / 1000) + 1 : Math.floor(Date.now() / 1000) - 3600;
-                // Pass stored L2 creds to engine during restore
+                // Restore credentials specifically
                 const l2Creds = user.proxyWallet.l2ApiCredentials;
                 const config = {
                     ...user.activeBotConfig,
@@ -491,12 +446,18 @@ async function restoreBots() {
                     stats: user.stats,
                     activePositions: user.activePositions,
                     startCursor: lastTime,
-                    l2ApiCredentials: l2Creds,
-                    // RESTORE PAYMASTER RPC
-                    zeroDevPaymasterRpc: process.env.ZERODEV_PAYMASTER_RPC
+                    l2ApiCredentials: l2Creds, // Pass restored creds
+                    zeroDevRpc: ENV.zeroDevRpc
                 };
-                await startUserBot(user.address, config);
-                console.log(`✅ Restored Bot: ${user.address}`);
+                // Use startUserBot but don't await potentially long-running startup if it were blocking
+                // But startUserBot awaits engine.start(), so engine.start must be non-blocking.
+                try {
+                    await startUserBot(user.address, config);
+                    console.log(`✅ Restored Bot: ${user.address} (Has L2 Creds: ${!!l2Creds})`);
+                }
+                catch (err) {
+                    console.error(`Bot Start Error: ${err.message}`);
+                }
             }
         }
     }
@@ -504,11 +465,10 @@ async function restoreBots() {
         console.error("Restore failed:", e);
     }
 }
+// ... [Connect DB and Listen] ...
 connectDB(ENV.mongoUri).then(async () => {
-    // Seed system wallets first
-    await seedOfficialWallets();
-    // Start Registry Analytics Loop (Every 15 mins)
-    setInterval(() => registryAnalytics.updateAllRegistryStats(), 15 * 60 * 1000);
+    // await seedOfficialWallets(); // Optional
+    registryAnalytics.updateAllRegistryStats();
     app.listen(PORT, () => {
         console.log(`🌍 Bet Mirror Cloud Server running on port ${PORT}`);
         restoreBots();

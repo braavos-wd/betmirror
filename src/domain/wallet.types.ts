@@ -1,15 +1,24 @@
 
 export type WalletType = 'SMART_ACCOUNT';
 
+export interface L2ApiCredentials {
+    key: string;        // Client expects 'key'
+    secret: string;     // Client expects 'secret'
+    passphrase: string;
+}
+
 export interface ProxyWalletConfig {
   address: string;
   type: WalletType;
   
   // Account Abstraction Fields
-  serializedSessionKey: string; // The session key string provided by ZeroDev
-  sessionPrivateKey?: string; // Optional: Server doesn't need to persist this if using serialized, but good for debugging
-  ownerAddress: string; // The EOA that controls this smart account
+  serializedSessionKey: string; 
+  sessionPrivateKey?: string; 
+  ownerAddress: string; 
   createdAt: string;
+
+  // L2 Auth (Trading) Credentials
+  l2ApiCredentials?: L2ApiCredentials;
 }
 
 export interface WalletBalance {

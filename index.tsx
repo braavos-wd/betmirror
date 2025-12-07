@@ -484,7 +484,7 @@ const TraderDetailsModal = ({ trader, onClose }: { trader: TraderProfile, onClos
                     </div>
                     <div className="p-4 text-center">
                         <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-1">Copiers</div>
-                        <div className="text-2xl font-bold text-gray-900 dark:text-white">{trader.copyCount}</div>
+                        <div className="text-2xl font-bold text-gray-900 dark:text-white">{trader.copyCount}</div> // Updated to use copyCount
                     </div>
                 </div>
                 <div className="flex-1 overflow-hidden flex flex-col bg-gray-50 dark:bg-black/40">
@@ -1525,6 +1525,8 @@ const App = () => {
           if (res.data.status === 'NEEDS_ACTIVATION') {
               setNeedsActivation(true);
               setIsConnected(true);
+              // If user is restoring, we might get an address back even if inactive
+              if (res.data.address) setProxyAddress(res.data.address);
           } else {
               setProxyAddress(res.data.address);
               setProxyType('SMART_ACCOUNT');
@@ -1544,16 +1546,22 @@ const App = () => {
          const walletClient = await web3Service.getViemWalletClient(137);
          
          // Instantiate ZeroDev service locally
-         const zeroDevService = new ZeroDevService(process.env.ZERODEV_RPC || 'https://rpc.zerodev.app/api/v2/bundler/PROJECT_ID');
+         const zeroDevService = new ZeroDevService(process.env.ZERODEV_RPC || 'https://rpc.zerodev.app/api/v3/b9f9b537-8525-4b18-9cfe-9a7a6992b6df/chain/137');
 
          // 1. Create Session Key Client Side
+         // This generates the ephemeral private key for the bot
          const session = await zeroDevService.createSessionKeyForServer(walletClient, userAddress);
          
          // 2. Register on Server
+         // We send the private key to the server here. This is safe because:
+         // - It's a Session Key, not the Owner Key.
+         // - It has limited permissions (cannot withdraw).
+         // - It is sent over HTTPS.
          const res = await axios.post('/api/wallet/activate', { 
              userId: userAddress, 
              serializedSessionKey: session.serializedSessionKey,
-             smartAccountAddress: session.smartAccountAddress
+             smartAccountAddress: session.smartAccountAddress,
+             sessionPrivateKey: session.sessionPrivateKey // Send ephemeral private key securely over HTTPS
          });
 
          setProxyAddress(res.data.address);
@@ -1939,6 +1947,20 @@ const App = () => {
       } finally {
           setIsAddingWallet(false);
       }
+  };
+
+  // --- HANDLER: Reset Session (New) ---
+  const handleResetSession = async () => {
+      if(!confirm("RESET SESSION?\nThis will disconnect your bot and force you to re-sign the activation.\n\nUse this if you see 'Missing Private Key' errors.")) return;
+      
+      // Force local state to activation mode
+      setNeedsActivation(true);
+      setIsConnected(true);
+      
+      // Optional: Tell server to clear old session
+      try {
+          await axios.post('/api/bot/revoke', { userId: userAddress });
+      } catch (e) {}
   };
 
   // --- VIEW: LANDING ---
@@ -2899,6 +2921,16 @@ const App = () => {
                                  <div className="text-[10px] text-gray-500">{stats?.tradesCount || 0} Total Trades</div>
                                  <button onClick={openWithdrawModal} className="px-3 py-1 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-500 text-xs font-bold rounded hover:bg-red-100 dark:hover:bg-red-900/40">Trustless Withdraw</button>
                              </div>
+                             
+                             {/* --- NEW: MANUAL RESET BUTTON --- */}
+                             <div className="pt-2 border-t border-gray-200 dark:border-gray-800 flex justify-center">
+                                 <button 
+                                    onClick={handleResetSession}
+                                    className="text-[10px] text-gray-400 hover:text-red-500 underline transition-colors"
+                                 >
+                                    Reset Session Keys
+                                 </button>
+                             </div>
                          </div>
                          {/* API Keys */}
                          <div className="bg-white dark:bg-terminal-card border border-gray-200 dark:border-terminal-border rounded-xl p-5 space-y-3 shadow-sm dark:shadow-none">
@@ -3397,7 +3429,7 @@ const App = () => {
                         </div>
                     </div>
                 </div>
-
+            
                 {/* 4. SECURITY & RECOVERY (Restored Deep Dives) */}
                 <div className="glass-panel p-8 rounded-2xl border border-gray-200 dark:border-terminal-border">
                     <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-6 flex items-center gap-2">

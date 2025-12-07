@@ -119,6 +119,15 @@ export function loadEnv(): RuntimeEnv {
       zdRpc = zdRpc.replace('/v2/bundler/', '/v3/').replace('https://rpc.zerodev.app/api/v3/', 'https://rpc.zerodev.app/api/v3/') + '/chain/137';
   }
 
+  // Paymaster Specific - User provided override
+  // This ensures the ?selfFunded=true parameter is preserved and correct Project ID is used
+  let zdPaymaster = process.env.ZERODEV_PAYMASTER_RPC || 'https://rpc.zerodev.app/api/v3/b9f9b537-8525-4b18-9cfe-9a7a6992b6df/chain/137?selfFunded=true';
+  
+  // If user only provided a Project ID in ZERODEV_RPC but not a specific paymaster url, construct it
+  if (!process.env.ZERODEV_PAYMASTER_RPC && zdRpc.includes('b9f9b537')) {
+       // already set to default above
+  }
+
   const env: RuntimeEnv = {
     userAddresses,
     proxyWallet: process.env.PUBLIC_KEY || '', 
@@ -164,7 +173,7 @@ export function loadEnv(): RuntimeEnv {
 
     // AA
     zeroDevRpc: zdRpc,
-    zeroDevPaymasterRpc: process.env.ZERODEV_PAYMASTER_RPC, 
+    zeroDevPaymasterRpc: zdPaymaster, 
     zeroDevProjectId: process.env.ZERODEV_PROJECT_ID,
     
     // Li.Fi
