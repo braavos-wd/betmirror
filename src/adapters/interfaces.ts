@@ -1,4 +1,5 @@
-import { TradeSignal, ActivePosition } from '../domain/trade.types';
+
+import { OrderBook } from '../domain/market.types';
 
 export type OrderSide = 'BUY' | 'SELL';
 
@@ -28,7 +29,8 @@ export interface IExchangeAdapter {
     // Market Data
     fetchBalance(address: string): Promise<number>;
     getMarketPrice(marketId: string, tokenId: string): Promise<number>;
-    
+    getOrderBook(tokenId: string): Promise<OrderBook>;
+
     // Execution
     createOrder(params: OrderParams): Promise<string>; // Returns Order ID / Tx Hash
     cancelOrder(orderId: string): Promise<boolean>;
@@ -39,6 +41,5 @@ export interface IExchangeAdapter {
     // Legacy Accessors (Temporary during migration phase)
     getRawClient?(): any;
     getSigner?(): any;
-    // FIX: Allow undefined since funder address might not be resolved immediately
     getFunderAddress?(): string | undefined; 
 }

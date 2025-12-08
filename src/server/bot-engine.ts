@@ -1,3 +1,4 @@
+
 import { TradeMonitorService } from '../services/trade-monitor.service.js';
 import { TradeExecutorService } from '../services/trade-executor.service.js';
 import { aiAgent } from '../services/ai-agent.service.js';
@@ -84,7 +85,6 @@ export class BotEngine {
             await this.addLog('info', '🚀 Starting Engine...');
 
             // --- STEP 1: INITIALIZE ADAPTER ---
-            // Create a logger that satisfies the Logger interface
             const engineLogger: Logger = {
                 info: (m: string) => console.log(m),
                 warn: (m: string) => console.warn(m),
@@ -128,7 +128,7 @@ export class BotEngine {
     private async checkFunding(): Promise<boolean> {
         try {
             if(!this.exchange) return false;
-            // Balance check via Adapter
+            // Use Adapter to check balance
             const funderAddr = this.exchange.getFunderAddress();
             if (!funderAddr) return false;
             const balance = await this.exchange.fetchBalance(funderAddr);
@@ -165,7 +165,7 @@ export class BotEngine {
             // 2. Authenticate (Handshake)
             await this.exchange.authenticate();
 
-            // 3. Start Services (Using Raw Client from Adapter for now)
+            // 3. Start Services
             this.startServices();
 
         } catch (e: any) {
@@ -197,28 +197,24 @@ export class BotEngine {
             success: (m: string) => console.log(`✅ ${m}`)
         };
 
-        // EXECUTOR
-        // Note: Using Legacy Raw Client access until Executor is fully refactored to use IExchangeAdapter
-        const rawClient = this.exchange.getRawClient();
-        const signer = this.exchange.getSigner();
+        // EXECUTOR - Uses Adapter
+        const signer = this.exchange.getSigner(); 
         const funder = this.exchange.getFunderAddress();
 
-        if (!rawClient || !signer || !funder) {
+        if (!signer || !funder) {
             throw new Error("Adapter initialization incomplete. Missing client components.");
         }
 
-        // Fix Type Error: Force cast to expected interface because we know it's compatible at runtime
-        // The service expects { wallet: Wallet } which signer satisfies (since it is EthersV6Adapter extends Wallet)
         this.executor = new TradeExecutorService({
-            client: Object.assign(rawClient, { wallet: signer }) as any,
+            adapter: this.exchange,
             proxyWallet: funder,
             env: runtimeEnv,
             logger: serviceLogger
         });
 
-        this.stats.allowanceApproved = true; // Handled by Adapter
+        this.stats.allowanceApproved = true; 
 
-        // FUND MANAGER
+        // FUND MANAGER - Uses generic signer for now
         const fundManager = new FundManagerService(
             signer, 
             {
@@ -236,9 +232,9 @@ export class BotEngine {
             if (cashout && this.callbacks?.onCashout) await this.callbacks.onCashout(cashout);
         } catch(e) {}
 
-        // MONITOR
+        // MONITOR - Uses Adapter
         this.monitor = new TradeMonitorService({
-            client: rawClient,
+            adapter: this.exchange,
             env: { ...runtimeEnv, fetchIntervalSeconds: 2, aggregationWindowSeconds: 300 },
             logger: serviceLogger,
             userAddresses: this.config.userAddresses,
@@ -316,10 +312,6 @@ export class BotEngine {
     private async checkAutoTp() {
         if (!this.config.autoTp || !this.executor || !this.exchange || this.activePositions.length === 0) return;
         
-        const client = this.exchange.getRawClient();
-        // SAFEGUARD: Ensure client exists before use
-        if (!client) return;
-
         const positionsToCheck = [...this.activePositions];
         
         for (const pos of positionsToCheck) {
@@ -333,9 +325,10 @@ export class BotEngine {
                     }
                 } catch (e) { continue; }
   
-                const orderBook = await client.getOrderBook(pos.tokenId);
+                // Use Adapter to get Orderbook for price check
+                const orderBook = await this.exchange.getOrderBook(pos.tokenId);
                 if (orderBook.bids && orderBook.bids.length > 0) {
-                    const bestBid = parseFloat(orderBook.bids[0].price);
+                    const bestBid = orderBook.bids[0].price;
                     const gainPercent = ((bestBid - pos.entryPrice) / pos.entryPrice) * 100;
                     
                     if (gainPercent >= this.config.autoTp) {

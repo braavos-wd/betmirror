@@ -1,16 +1,17 @@
+
 import { 
     IExchangeAdapter, 
-    OrderParams 
-} from '../interfaces.js'; // Added .js
-import { ClobClient, Chain, ApiKeyCreds } from '@polymarket/clob-client';
-import { Wallet, JsonRpcProvider, Contract, MaxUint256, AbstractSigner, TransactionRequest, Provider } from 'ethers';
-import { ZeroDevService } from '../../services/zerodev.service.js'; // Added .js
-import { ProxyWalletConfig } from '../../domain/wallet.types.js'; // Added .js
-import { User } from '../../database/index.js'; // Added .js
+    OrderParams
+} from '../interfaces.js';
+import { OrderBook } from '../../domain/market.types.js';
+import { ClobClient, Chain, OrderType, Side } from '@polymarket/clob-client';
+import { Wallet, JsonRpcProvider, Contract, MaxUint256 } from 'ethers';
+import { ZeroDevService } from '../../services/zerodev.service.js';
+import { ProxyWalletConfig } from '../../domain/wallet.types.js';
+import { User } from '../../database/index.js';
 import { BuilderConfig } from '@polymarket/builder-signing-sdk';
-import { getUsdBalanceApprox } from '../../utils/get-balance.util.js'; // Added .js
-import { httpGet } from '../../utils/http.js'; // Added .js
-import { Logger } from '../../utils/logger.util.js'; // Added .js
+import { getUsdBalanceApprox } from '../../utils/get-balance.util.js';
+import { Logger } from '../../utils/logger.util.js';
 
 // --- CONSTANTS ---
 const USDC_BRIDGED_POLYGON = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
@@ -41,13 +42,10 @@ export class PolymarketAdapter implements IExchangeAdapter {
     
     private client?: ClobClient;
     private signerImpl?: any;
-    private funderAddress?: string | undefined; // Allow undefined to match interface
+    private funderAddress?: string | undefined; 
     private zdService?: ZeroDevService;
     private usdcContract?: Contract;
     
-    // Caches
-    private balanceCache: Map<string, { value: number; timestamp: number }> = new Map();
-
     constructor(
         private config: {
             rpcUrl: string;
@@ -88,7 +86,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
              this.signerImpl = new EthersV6Adapter(this.config.walletConfig.sessionPrivateKey, provider);
              
         } else {
-             // Legacy EOA (Not supported in this strict mode, but kept for compat)
+             // Legacy EOA support
              throw new Error("Only Smart Accounts supported in this adapter version.");
         }
 
@@ -112,7 +110,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 return true;
             } catch (e: any) {
                 this.logger.warn(`Deployment check note: ${e.message}`);
-                // Proceed anyway, might be already deployed
             }
         }
         return true;
@@ -200,27 +197,113 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 this.logger.success('✅ Approved.');
             }
         } catch(e) { 
-            this.logger.warn("Allowance check skipped (AA delegation)"); 
+            this.logger.warn("Allowance check skipped (AA delegation or RPC error)"); 
         }
     }
 
     async fetchBalance(address: string): Promise<number> {
-        // Use standard Ethers provider check on USDC.e
-        // Note: For Smart Accounts, we check the Funder Address
-        const target = address || this.funderAddress;
         return await getUsdBalanceApprox(this.signerImpl, USDC_BRIDGED_POLYGON);
     }
 
     async getMarketPrice(marketId: string, tokenId: string): Promise<number> {
-        // Not implemented in this phase, handled by signal
-        return 0;
+        if (!this.client) return 0;
+        try {
+            // Using midpoint as a proxy for price
+            const mid = await this.client.getMidpoint(tokenId);
+            return parseFloat(mid.mid);
+        } catch (e) {
+            return 0;
+        }
+    }
+
+    async getOrderBook(tokenId: string): Promise<OrderBook> {
+        if (!this.client) throw new Error("Client not authenticated");
+        const book = await this.client.getOrderBook(tokenId);
+        // Map Polymarket Book to Generic Interface
+        return {
+            bids: book.bids.map(b => ({ price: parseFloat(b.price), size: parseFloat(b.size) })),
+            asks: book.asks.map(a => ({ price: parseFloat(a.price), size: parseFloat(a.size) }))
+        };
     }
 
     async createOrder(params: OrderParams): Promise<string> {
         if (!this.client) throw new Error("Client not authenticated");
+        
+        const isBuy = params.side === 'BUY';
+        const orderSide = isBuy ? Side.BUY : Side.SELL;
 
-        // Return dummy for now as migration is gradual and services rely on raw client access
-        return "not-implemented-in-adapter-yet"; 
+        // --- MARKET ORDER EXECUTION LOGIC ---
+        // Loops to fill size, handling liquidity and FOK requirements
+        let remaining = params.sizeUsd;
+        let retryCount = 0;
+        const maxRetries = 3;
+        let lastTx = "";
+
+        while (remaining > 0.50 && retryCount < maxRetries) { // Min order ~0.50
+            const currentOrderBook = await this.client.getOrderBook(params.tokenId);
+            const currentLevels = isBuy ? currentOrderBook.asks : currentOrderBook.bids;
+
+            if (!currentLevels || currentLevels.length === 0) {
+                 if (retryCount === 0) throw new Error("No liquidity in orderbook");
+                 break; 
+            }
+
+            const level = currentLevels[0];
+            const levelPrice = parseFloat(level.price);
+            const levelSize = parseFloat(level.size);
+
+            // Price Protection
+            if (isBuy && params.priceLimit && levelPrice > params.priceLimit) break;
+            if (!isBuy && params.priceLimit && levelPrice < params.priceLimit) break;
+
+            let orderSize: number;
+            let orderValue: number;
+
+            if (isBuy) {
+                const levelValue = levelSize * levelPrice;
+                orderValue = Math.min(remaining, levelValue);
+                orderSize = orderValue / levelPrice;
+            } else {
+                // For Sell, sizeUsd is essentially the value we want to exit
+                const levelValue = levelSize * levelPrice;
+                orderValue = Math.min(remaining, levelValue);
+                orderSize = orderValue / levelPrice;
+            }
+
+            // Polymarket API precision handling
+            orderSize = Math.floor(orderSize * 100) / 100;
+
+            if (orderSize <= 0) break;
+
+            const orderArgs = {
+                side: orderSide,
+                tokenID: params.tokenId,
+                amount: orderSize,
+                price: levelPrice,
+            };
+
+            try {
+                const signedOrder = await this.client.createMarketOrder(orderArgs);
+                const response = await this.client.postOrder(signedOrder, OrderType.FOK);
+
+                if (response.success) {
+                    remaining -= orderValue;
+                    retryCount = 0;
+                    lastTx = response.orderID || "filled";
+                } else {
+                    this.logger.warn(`FOK Failed. Retrying...`);
+                    retryCount++;
+                }
+            } catch (error: any) {
+                this.logger.error(`Order attempt failed: ${error.message}`);
+                retryCount++;
+            }
+            
+            // Brief pause between fills
+            await new Promise(r => setTimeout(r, 200));
+        }
+        
+        return lastTx || "failed";
     }
 
     async cancelOrder(orderId: string): Promise<boolean> {
@@ -234,20 +317,14 @@ export class PolymarketAdapter implements IExchangeAdapter {
     }
 
     async cashout(amount: number, destination: string): Promise<string> {
-        // Logic handled by FundManagerService usually, but can be moved here.
+        // This should delegate to FundManagerService logic ideally, 
+        // but can be implemented here if we want the Adapter to handle withdrawals too.
+        // For now, return empty as FundManager handles this via ZeroDevService directly.
         return "";
     }
     
-    // Expose raw client for legacy services until full refactor
-    public getRawClient() {
-        return this.client;
-    }
-    
-    public getSigner() {
-        return this.signerImpl;
-    }
-    
-    public getFunderAddress() {
-        return this.funderAddress;
-    }
+    // Legacy Accessors
+    public getRawClient() { return this.client; }
+    public getSigner() { return this.signerImpl; }
+    public getFunderAddress() { return this.funderAddress; }
 }
