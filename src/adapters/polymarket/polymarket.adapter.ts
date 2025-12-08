@@ -1,4 +1,3 @@
-
 import { 
     IExchangeAdapter, 
     OrderParams
@@ -16,7 +15,6 @@ import axios from 'axios';
 
 // --- CONSTANTS ---
 const USDC_BRIDGED_POLYGON = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
-// Confirmed CTF Exchange Address
 const POLYMARKET_EXCHANGE = '0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E';
 
 const USDC_ABI = [
@@ -26,7 +24,6 @@ const USDC_ABI = [
   'function transfer(address to, uint256 amount) returns (bool)'
 ];
 
-// --- ADAPTER: Ethers V6 Wallet -> V5 Compatibility ---
 class EthersV6Adapter extends Wallet {
     async _signTypedData(domain: any, types: any, value: any): Promise<string> {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -81,43 +78,30 @@ export class PolymarketAdapter implements IExchangeAdapter {
 
     async initialize(): Promise<void> {
         this.logger.info(`[${this.exchangeName}] Initializing Adapter...`);
-        
         const provider = new JsonRpcProvider(this.config.rpcUrl);
         
-        // 1. Setup Signer (Type 0 EOA)
         if (this.config.walletConfig.type === 'SMART_ACCOUNT') {
              if (!this.config.zeroDevRpc) throw new Error("Missing ZeroDev RPC");
-             
-             // AA Service for On-Chain Ops
              this.zdService = new ZeroDevService(
                  this.config.zeroDevRpc, 
                  this.config.zeroDevPaymasterRpc
              );
-
              this.funderAddress = this.config.walletConfig.address;
-             
              if (!this.config.walletConfig.sessionPrivateKey) {
                  throw new Error("Missing Session Private Key for Auth");
              }
-             
-             // Use Adapter for V5 compatibility
              this.signerImpl = new EthersV6Adapter(this.config.walletConfig.sessionPrivateKey, provider);
-             
         } else {
-             // Legacy EOA support
              throw new Error("Only Smart Accounts supported in this adapter version.");
         }
 
-        // 2. Setup USDC Contract for Allowance Checks
         this.usdcContract = new Contract(USDC_BRIDGED_POLYGON, USDC_ABI, this.signerImpl);
     }
 
     async validatePermissions(): Promise<boolean> {
-        // Ensure On-Chain Deployment via ZeroDev
         if (this.zdService && this.funderAddress) {
             try {
                 this.logger.info('🔄 Verifying Smart Account Deployment...');
-                // Idempotent "Approve 0" tx to force deployment if needed
                 await this.zdService.sendTransaction(
                     this.config.walletConfig.serializedSessionKey,
                     USDC_BRIDGED_POLYGON,
@@ -136,20 +120,39 @@ export class PolymarketAdapter implements IExchangeAdapter {
     }
 
     async authenticate(): Promise<void> {
-        // Setup Stealth Options (Browser Fingerprinting) - Currently unused due to library constraints
-        /*
+        // --- GLOBAL AXIOS PATCH (Anti-Cloudflare) ---
+        // This interceptor forces Chrome headers on ALL requests, bypassing SDK defaults.
+        const STEALTH_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+        
+        axios.defaults.headers.common['User-Agent'] = STEALTH_UA;
+        
+        // Remove existing interceptors to prevent duplicates on re-auth
+        // (Note: axios doesn't easily let us clear, so we just add a new one that wins)
+        axios.interceptors.request.use(config => {
+            if (config.url?.includes('polymarket.com')) {
+                config.headers['User-Agent'] = STEALTH_UA;
+                config.headers['Origin'] = 'https://polymarket.com';
+                config.headers['Referer'] = 'https://polymarket.com/';
+                config.headers['Accept'] = 'application/json, text/plain, */*';
+                config.headers['Accept-Language'] = 'en-US,en;q=0.9';
+                // Remove SDK default agent if present
+                if (config.headers['User-Agent'] === '@polymarket/clob-client') {
+                    config.headers['User-Agent'] = STEALTH_UA;
+                }
+            }
+            return config;
+        });
+
+        // Also pass as options for good measure
         const stealthOptions = {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': STEALTH_UA,
                 'Origin': 'https://polymarket.com',
                 'Referer': 'https://polymarket.com/',
-                'Accept': 'application/json, text/plain, * /*',
-                'Accept-Language': 'en-US,en;q=0.9',
-            }
+            },
+            timeout: 30000
         };
-        */
 
-        // L2 Handshake Logic
         let apiCreds = this.config.l2ApiCredentials;
 
         if (!apiCreds || !apiCreds.key) {
@@ -160,9 +163,12 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 Chain.POLYGON,
                 this.signerImpl,
                 undefined,
-                SignatureType.EOA, // Type 0
-                this.funderAddress
-                // stealthOptions was removed as it mismatches constructor signature
+                SignatureType.EOA,
+                this.funderAddress,
+                undefined,
+                undefined,
+                undefined,
+                stealthOptions as any
             );
 
             try {
@@ -177,7 +183,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
                     passphrase: rawCreds.passphrase
                 };
 
-                // Persist
                 await User.findOneAndUpdate(
                     { address: this.config.userId },
                     { "proxyWallet.l2ApiCredentials": apiCreds }
@@ -192,7 +197,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
              this.logger.info('🔌 Connecting to CLOB...');
         }
 
-        // Initialize Real Client
         let builderConfig: BuilderConfig | undefined;
         if (this.config.builderApiKey) {
             builderConfig = new BuilderConfig({ 
@@ -211,32 +215,28 @@ export class PolymarketAdapter implements IExchangeAdapter {
             apiCreds,
             SignatureType.EOA,
             this.funderAddress,
-            undefined, // broadcastSocketEndpoint
-            undefined, // messageSocketEndpoint
-            builderConfig
+            undefined, 
+            undefined,
+            builderConfig,
+            stealthOptions as any
         );
         
-        // Ensure Allowance (Critical for trading)
         await this.ensureAllowance();
     }
 
     private async ensureAllowance() {
         if(!this.usdcContract || !this.funderAddress) return;
         try {
-            // Polymarket requires allowance on the CTF Exchange
-            // Check contract on public RPC to be safe
             const publicProvider = new JsonRpcProvider("https://polygon-rpc.com");
             const readContract = new Contract(USDC_BRIDGED_POLYGON, USDC_ABI, publicProvider);
             const allowance = await readContract.allowance(this.funderAddress, POLYMARKET_EXCHANGE);
             
             this.logger.info(`🔍 Allowance Check: ${formatUnits(allowance, 6)} USDC Approved for Exchange`);
 
-            // Check if allowance is insufficient (less than 1000 USDC)
             if (allowance < BigInt(1000000 * 1000)) {
                 this.logger.info('🔓 Approving USDC for CTF Exchange...');
                 
                 if (this.zdService) {
-                    // Send via ZeroDev (Smart Account)
                     const txHash = await this.zdService.sendTransaction(
                         this.config.walletConfig.serializedSessionKey,
                         USDC_BRIDGED_POLYGON,
@@ -251,7 +251,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
             }
         } catch(e: any) { 
             this.logger.error(`Allowance Check Failed: ${e.message}`);
-            // CRITICAL: Throw to stop the bot from running without allowance
             throw new Error(`Failed to approve USDC. Bot cannot trade. Error: ${e.message}`);
         }
     }
@@ -287,15 +286,8 @@ export class PolymarketAdapter implements IExchangeAdapter {
 
     async fetchPublicTrades(address: string, limit: number = 20): Promise<TradeSignal[]> {
         try {
-            // Apply stealth headers to manual monitoring calls too
             const url = `https://data-api.polymarket.com/activity?user=${address}&limit=${limit}`;
-            const res = await axios.get<PolyActivityResponse[]>(url, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Origin': 'https://polymarket.com',
-                    'Referer': 'https://polymarket.com/'
-                }
-            });
+            const res = await axios.get<PolyActivityResponse[]>(url);
             
             if (!res.data || !Array.isArray(res.data)) return [];
 
@@ -333,7 +325,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
         const maxRetries = 3;
         let lastOrderId = "";
 
-        // Fix: Use >= to allow exactly 0.50 orders (Smart Floor)
         while (remaining >= 0.50 && retryCount < maxRetries) { 
             const currentOrderBook = await this.client.getOrderBook(params.tokenId);
             const currentLevels = isBuy ? currentOrderBook.asks : currentOrderBook.bids;
@@ -346,7 +337,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
             const level = currentLevels[0];
             const levelPrice = parseFloat(level.price);
 
-            // Price Protection
             if (isBuy && params.priceLimit && levelPrice > params.priceLimit) break;
             if (!isBuy && params.priceLimit && levelPrice < params.priceLimit) break;
 
@@ -383,11 +373,9 @@ export class PolymarketAdapter implements IExchangeAdapter {
                     retryCount = 0;
                     lastOrderId = response.orderID;
                 } else {
-                    // IMPORTANT: Log exact error from exchange to DB/UI
                     const errMsg = response.errorMsg || 'Unknown Relayer Error';
                     this.logger.error(`❌ Exchange Rejection: ${errMsg}`);
                     
-                    // If error indicates auth/proxy issues, re-check allowance
                     if (errMsg.toLowerCase().includes("proxy") || errMsg.toLowerCase().includes("allowance")) {
                          this.logger.warn("Triggering emergency allowance check...");
                          await this.ensureAllowance();
@@ -400,8 +388,8 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 retryCount++;
             }
             
-            // ANTI-BOT PROTECTION: Add random jitter delay (2s - 4s) between retries
-            const jitter = Math.floor(Math.random() * 2000) + 2000;
+            // Random Jitter (2s - 4.5s) to look human
+            const jitter = Math.floor(Math.random() * 2500) + 2000;
             await new Promise(r => setTimeout(r, jitter));
         }
         
@@ -424,9 +412,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
         }
         
         this.logger.info(`💸 Adapters initiating cashout of $${amount} to ${destination}`);
-        
         const amountUnits = parseUnits(amount.toFixed(6), 6);
-        
         const txHash = await this.zdService.sendTransaction(
             this.config.walletConfig.serializedSessionKey,
             USDC_BRIDGED_POLYGON,
@@ -434,11 +420,9 @@ export class PolymarketAdapter implements IExchangeAdapter {
             'transfer',
             [destination, amountUnits]
         );
-        
         return txHash;
     }
     
-    // Legacy Accessors
     public getRawClient() { return this.client; }
     public getSigner() { return this.signerImpl; }
     public getFunderAddress() { return this.funderAddress; }
