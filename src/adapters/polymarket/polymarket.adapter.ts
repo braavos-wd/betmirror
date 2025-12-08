@@ -1,4 +1,3 @@
-
 import { 
     IExchangeAdapter, 
     OrderParams
@@ -73,6 +72,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
             builderApiKey?: string;
             builderApiSecret?: string;
             builderApiPassphrase?: string;
+            proxyUrl?: string; // New Proxy Config
         },
         private logger: Logger
     ) {}
@@ -119,28 +119,65 @@ export class PolymarketAdapter implements IExchangeAdapter {
         }
         return true;
     }
+    
+    // Helper to parse proxy string into Axios config
+    private getHttpOptions() {
+        const proxyUrl = this.config.proxyUrl;
+        
+        // 1. Base Headers (Stealth)
+        const headers: any = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Origin': 'https://polymarket.com',
+            'Referer': 'https://polymarket.com/',
+        };
+
+        const httpOptions: any = { headers, timeout: 30000 };
+
+        // 2. Proxy Configuration
+        if (proxyUrl && proxyUrl.startsWith('http')) {
+            try {
+                const url = new URL(proxyUrl);
+                httpOptions.proxy = {
+                    protocol: url.protocol.replace(':', ''),
+                    host: url.hostname,
+                    port: parseInt(url.port) || 80,
+                };
+                
+                if (url.username && url.password) {
+                    httpOptions.proxy.auth = {
+                        username: url.username,
+                        password: url.password
+                    };
+                }
+                this.logger.info(`🛡️ Proxy Configured: ${url.hostname}`);
+            } catch (e) {
+                this.logger.warn(`Invalid Proxy URL: ${proxyUrl}`);
+            }
+        }
+        
+        return httpOptions;
+    }
 
     async authenticate(): Promise<void> {
         // --- GLOBAL AXIOS PATCH (Anti-Cloudflare) ---
-        // This interceptor forces Chrome headers on ALL requests, bypassing SDK defaults.
         const STEALTH_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-        
-        // Force defaults
         axios.defaults.headers.common['User-Agent'] = STEALTH_UA;
         
-        // Intercept requests to inject headers dynamically
+        // --- PROXY SETUP ---
+        const httpOptions = this.getHttpOptions();
+        
+        // If we have a proxy, apply it globally to axios as a fallback
+        if (httpOptions.proxy) {
+            axios.defaults.proxy = httpOptions.proxy;
+        }
+
+        // Add interceptor to ensure headers persist
         axios.interceptors.request.use(config => {
             if (config.url?.includes('polymarket.com')) {
                 config.headers['User-Agent'] = STEALTH_UA;
                 config.headers['Origin'] = 'https://polymarket.com';
-                config.headers['Referer'] = 'https://polymarket.com/';
-                config.headers['Accept'] = 'application/json, text/plain, */*';
-                config.headers['Accept-Language'] = 'en-US,en;q=0.9';
-                config.headers['Sec-Ch-Ua'] = '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"';
-                config.headers['Sec-Ch-Ua-Mobile'] = '?0';
-                config.headers['Sec-Ch-Ua-Platform'] = '"Windows"';
                 
-                // Nuke SDK default if present
+                // Remove SDK default
                 if (config.headers['User-Agent'] === '@polymarket/clob-client') {
                     config.headers['User-Agent'] = STEALTH_UA;
                 }
@@ -153,14 +190,18 @@ export class PolymarketAdapter implements IExchangeAdapter {
         if (!apiCreds || !apiCreds.key) {
             this.logger.info('🤝 Performing L2 Handshake...');
             
-            // Standard initialization without extra options to prevent SDK crashes
+            // Pass httpOptions to constructor (10th arg)
             const tempClient = new ClobClient(
                 'https://clob.polymarket.com',
                 Chain.POLYGON,
                 this.signerImpl,
                 undefined,
                 SignatureType.EOA,
-                this.funderAddress
+                this.funderAddress,
+                undefined,
+                undefined,
+                undefined,
+                httpOptions 
             );
 
             try {
@@ -200,7 +241,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
             });
         }
 
-        // Initialize final client
         this.client = new ClobClient(
             'https://clob.polymarket.com',
             Chain.POLYGON,
@@ -210,7 +250,8 @@ export class PolymarketAdapter implements IExchangeAdapter {
             this.funderAddress,
             undefined, 
             undefined,
-            builderConfig
+            builderConfig,
+            httpOptions // Pass proxy options here too
         );
         
         await this.ensureAllowance();
@@ -279,7 +320,8 @@ export class PolymarketAdapter implements IExchangeAdapter {
     async fetchPublicTrades(address: string, limit: number = 20): Promise<TradeSignal[]> {
         try {
             const url = `https://data-api.polymarket.com/activity?user=${address}&limit=${limit}`;
-            const res = await axios.get<PolyActivityResponse[]>(url);
+            // Use configured proxy options for this request as well
+            const res = await axios.get<PolyActivityResponse[]>(url, this.getHttpOptions());
             
             if (!res.data || !Array.isArray(res.data)) return [];
 
@@ -380,7 +422,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 retryCount++;
             }
             
-            // Random Jitter (2s - 4.5s) to look human and avoid rate limits
+            // Random Jitter (2s - 4.5s)
             const jitter = Math.floor(Math.random() * 2500) + 2000;
             await new Promise(r => setTimeout(r, jitter));
         }
