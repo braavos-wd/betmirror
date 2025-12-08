@@ -118,7 +118,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
             try {
                 this.logger.info('🔄 Verifying Smart Account Deployment...');
                 // Idempotent "Approve 0" tx to force deployment if needed
-                // Using fallback-enabled sendTransaction
                 await this.zdService.sendTransaction(
                     this.config.walletConfig.serializedSessionKey,
                     USDC_BRIDGED_POLYGON,
@@ -129,7 +128,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 this.logger.success('✅ Smart Account Ready.');
                 return true;
             } catch (e: any) {
-                // CRITICAL: Fail if deployment fails
                 this.logger.error(`Deployment Failed: ${e.message}`);
                 throw new Error("Smart Account deployment failed. Check funds or network.");
             }
@@ -212,15 +210,19 @@ export class PolymarketAdapter implements IExchangeAdapter {
         if(!this.usdcContract || !this.funderAddress) return;
         try {
             // Polymarket requires allowance on the CTF Exchange
-            const allowance = await this.usdcContract.allowance(this.funderAddress, POLYMARKET_EXCHANGE);
+            // Check contract on public RPC to be safe
+            const publicProvider = new JsonRpcProvider("https://polygon-rpc.com");
+            const readContract = new Contract(USDC_BRIDGED_POLYGON, USDC_ABI, publicProvider);
+            const allowance = await readContract.allowance(this.funderAddress, POLYMARKET_EXCHANGE);
             
+            this.logger.info(`🔍 Allowance Check: ${formatUnits(allowance, 6)} USDC Approved for Exchange`);
+
             // Check if allowance is insufficient (less than 1000 USDC)
             if (allowance < BigInt(1000000 * 1000)) {
                 this.logger.info('🔓 Approving USDC for CTF Exchange...');
                 
                 if (this.zdService) {
                     // Send via ZeroDev (Smart Account)
-                    // The Updated sendTransaction will try Paymaster, catch failure, and fallback to Native
                     const txHash = await this.zdService.sendTransaction(
                         this.config.walletConfig.serializedSessionKey,
                         USDC_BRIDGED_POLYGON,
@@ -230,9 +232,11 @@ export class PolymarketAdapter implements IExchangeAdapter {
                     );
                     this.logger.success(`✅ Approved. Tx: ${txHash}`);
                 }
+            } else {
+                 this.logger.info('✅ Allowance Sufficient.');
             }
         } catch(e: any) { 
-            this.logger.error(`Allowance Failed: ${e.message}`);
+            this.logger.error(`Allowance Check Failed: ${e.message}`);
             // CRITICAL: Throw to stop the bot from running without allowance
             throw new Error(`Failed to approve USDC. Bot cannot trade. Error: ${e.message}`);
         }
@@ -308,7 +312,8 @@ export class PolymarketAdapter implements IExchangeAdapter {
         const maxRetries = 3;
         let lastOrderId = "";
 
-        while (remaining > 0.50 && retryCount < maxRetries) { 
+        // Fix: Use >= to allow exactly 0.50 orders (Smart Floor)
+        while (remaining >= 0.50 && retryCount < maxRetries) { 
             const currentOrderBook = await this.client.getOrderBook(params.tokenId);
             const currentLevels = isBuy ? currentOrderBook.asks : currentOrderBook.bids;
 
@@ -357,7 +362,16 @@ export class PolymarketAdapter implements IExchangeAdapter {
                     retryCount = 0;
                     lastOrderId = response.orderID;
                 } else {
-                    this.logger.warn(`Exchange Rejection: ${response.errorMsg || 'Unknown'}`);
+                    // IMPORTANT: Log exact error from exchange to DB/UI
+                    const errMsg = response.errorMsg || 'Unknown Relayer Error';
+                    this.logger.error(`❌ Exchange Rejection: ${errMsg}`);
+                    
+                    // If error indicates auth/proxy issues, re-check allowance
+                    if (errMsg.toLowerCase().includes("proxy") || errMsg.toLowerCase().includes("allowance")) {
+                         this.logger.warn("Triggering emergency allowance check...");
+                         await this.ensureAllowance();
+                    }
+                    
                     retryCount++;
                 }
             } catch (error: any) {

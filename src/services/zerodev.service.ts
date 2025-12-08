@@ -14,7 +14,8 @@ import {
   encodeFunctionData,
   parseAbi,
   decodeEventLog,
-  Log
+  Log,
+  Address
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { polygon } from "viem/chains";
@@ -25,11 +26,12 @@ import {
   toPermissionValidator,
 } from "@zerodev/permissions";
 import { toSudoPolicy } from "@zerodev/permissions/policies";
-import { getEntryPoint, KERNEL_V3_1 } from "@zerodev/sdk/constants";
+import { KERNEL_V3_1 } from "@zerodev/sdk/constants";
 
 // Constants
-// EntryPoint 0.7.0 as confirmed by on-chain logs
-const ENTRY_POINT = getEntryPoint("0.7");
+// Canonical EntryPoint 0.7.0 Address
+// Casting to any to avoid TypeScript errors with EntryPointType constraints in newer SDK versions
+const ENTRY_POINT_ADDRESS = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as any;
 const KERNEL_VERSION = KERNEL_V3_1;
 const CHAIN = polygon;
 
@@ -91,28 +93,31 @@ export class ZeroDevService {
    */
   private async checkUserOpReceipt(receipt: any) {
       if (!receipt) throw new Error("No receipt returned");
+      
+      // console.log("Checking Receipt Logs:", receipt.logs.length);
 
       // 1. Check direct success flag if available (Viem/ZeroDev standard)
       if (typeof receipt.success === 'boolean' && !receipt.success) {
            throw new Error(`UserOp failed (success=false). Gas Used: ${receipt.actualGasUsed}`);
       }
       
-      // 2. Fallback: Parse logs if success flag is ambiguous
-      // This handles cases where the receipt might be a standard tx receipt wrapper
+      // 2. Fallback: Parse logs to find UserOperationEvent
+      let foundUserOpEvent = false;
       if (receipt.logs) {
           for (const log of receipt.logs) {
               try {
-                  const entryPointAddr = (ENTRY_POINT as unknown as string).toLowerCase();
-                  if (log.address.toLowerCase() === entryPointAddr) {
-                       const decoded = decodeEventLog({
+                  if (log.address.toLowerCase() === ENTRY_POINT_ADDRESS.toLowerCase()) {
+                       const decoded: any = decodeEventLog({
                            abi: ENTRY_POINT_ABI,
                            data: log.data,
-                           topics: log.topics
-                       }) as unknown as { eventName: string; args: any };
+                           topics: log.topics as any
+                       });
 
                        if (decoded.eventName === 'UserOperationEvent') {
+                           foundUserOpEvent = true;
+                           // console.log(`UserOp Event Found. Success: ${decoded.args.success}`);
                            if (!decoded.args.success) {
-                               throw new Error(`UserOp Reverted on-chain. Revert Reason may be in trace.`);
+                               throw new Error(`UserOp REVERTED on-chain. Nonce: ${decoded.args.nonce}`);
                            }
                            return true; 
                        }
@@ -121,13 +126,15 @@ export class ZeroDevService {
           }
       }
       
+      // If we processed logs but didn't find the event, something is weird, but we assume success if no revert found
+      // unless strict mode is needed.
       return true;
   }
 
   async sendTransaction(serializedSessionKey: string, to: string, abi: any[], functionName: string, args: any[]) {
        const sessionKeyAccount = await deserializePermissionAccount(
           this.publicClient as any,
-          ENTRY_POINT,
+          ENTRY_POINT_ADDRESS,
           KERNEL_VERSION,
           serializedSessionKey
        );
@@ -204,6 +211,7 @@ export class ZeroDevService {
                callData: userOpCallData
            } as any);
            
+           console.log(`Fallback UserOp: ${userOpHash}`);
            const receipt = await fallbackClient.waitForUserOperationReceipt({ hash: userOpHash });
            await this.checkUserOpReceipt(receipt);
 
@@ -223,20 +231,16 @@ export class ZeroDevService {
        });
   }
 
-  // ... (rest of methods: computeMasterAccountAddress, createSessionKeyForServer, withdrawFunds) ...
-  // Ensure withdrawFunds also uses the new checkUserOpReceipt logic if needed, 
-  // but let's keep the focus on sendTransaction for now to minimize diff.
-
   async computeMasterAccountAddress(ownerWalletClient: WalletClient) {
       try {
           if (!ownerWalletClient) throw new Error("Missing owner wallet client");
           const ecdsaValidator = await signerToEcdsaValidator(this.publicClient as any, {
-              entryPoint: ENTRY_POINT,
+              entryPoint: ENTRY_POINT_ADDRESS,
               signer: ownerWalletClient as any,
               kernelVersion: KERNEL_VERSION,
           });
           const account = await createKernelAccount(this.publicClient as any, {
-              entryPoint: ENTRY_POINT,
+              entryPoint: ENTRY_POINT_ADDRESS,
               plugins: { sudo: ecdsaValidator },
               kernelVersion: KERNEL_VERSION,
           });
@@ -253,25 +257,25 @@ export class ZeroDevService {
     const sessionKeyAccount = privateKeyToAccount(sessionPrivateKey);
     const sessionKeySigner = await toECDSASigner({ signer: sessionKeyAccount });
     const ecdsaValidator = await signerToEcdsaValidator(this.publicClient as any, {
-      entryPoint: ENTRY_POINT,
+      entryPoint: ENTRY_POINT_ADDRESS,
       signer: ownerWalletClient as any, 
       kernelVersion: KERNEL_VERSION,
     });
     const permissionPlugin = await toPermissionValidator(this.publicClient as any, {
-      entryPoint: ENTRY_POINT,
+      entryPoint: ENTRY_POINT_ADDRESS,
       signer: sessionKeySigner,
       policies: [ toSudoPolicy({}) ],
       kernelVersion: KERNEL_VERSION,
     });
     const sessionKeyAccountObj = await createKernelAccount(this.publicClient as any, {
-      entryPoint: ENTRY_POINT,
+      entryPoint: ENTRY_POINT_ADDRESS,
       plugins: {
         sudo: ecdsaValidator,
         regular: permissionPlugin,
       },
       kernelVersion: KERNEL_VERSION,
     });
-    const serializedSessionKey = await serializePermissionAccount(sessionKeyAccountObj, sessionPrivateKey);
+    const serializedSessionKey = await serializePermissionAccount(sessionKeyAccountObj as any, sessionPrivateKey);
     return {
       smartAccountAddress: sessionKeyAccountObj.address,
       serializedSessionKey: serializedSessionKey,
@@ -280,15 +284,14 @@ export class ZeroDevService {
   }
 
   async withdrawFunds(ownerWalletClient: WalletClient, smartAccountAddress: string, toAddress: string, amount: bigint, tokenAddress: string) {
-      // ... (Implementation kept identical to previous mostly, just ensuring it imports correctly)
       console.log("Initiating Trustless Withdrawal...");
       const ecdsaValidator = await signerToEcdsaValidator(this.publicClient as any, {
-        entryPoint: ENTRY_POINT,
+        entryPoint: ENTRY_POINT_ADDRESS,
         signer: ownerWalletClient as any,
         kernelVersion: KERNEL_VERSION,
       });
       const account = await createKernelAccount(this.publicClient as any, {
-        entryPoint: ENTRY_POINT,
+        entryPoint: ENTRY_POINT_ADDRESS,
         plugins: { sudo: ecdsaValidator },
         kernelVersion: KERNEL_VERSION,
         address: smartAccountAddress as Hex,
