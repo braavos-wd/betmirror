@@ -3,8 +3,7 @@ import { TradeMonitorService } from '../services/trade-monitor.service.js';
 import { TradeExecutorService } from '../services/trade-executor.service.js';
 import { aiAgent } from '../services/ai-agent.service.js';
 import { NotificationService } from '../services/notification.service.js';
-import { FundManagerService, FundManagerConfig } from '../services/fund-manager.service.js';
-import { FeeDistributorService } from '../services/fee-distributor.service.js';
+import { FundManagerService } from '../services/fund-manager.service.js';
 import { TradeHistoryEntry, ActivePosition } from '../domain/trade.types.js';
 import { CashoutRecord, FeeDistributionEvent, IRegistryService } from '../domain/alpha.types.js';
 import { UserStats } from '../domain/user.types.js';
@@ -84,13 +83,14 @@ export class BotEngine {
         try {
             await this.addLog('info', '🚀 Starting Engine...');
 
-            // --- STEP 1: INITIALIZE ADAPTER ---
+            // --- RESTORED RICH LOGGING ---
+            // Bridge the local Logger to the Database persistence
             const engineLogger: Logger = {
-                info: (m: string) => console.log(m),
-                warn: (m: string) => console.warn(m),
-                error: (m: string, e?: any) => console.error(m, e),
+                info: (m: string) => { console.log(m); this.addLog('info', m); },
+                warn: (m: string) => { console.warn(m); this.addLog('warn', m); },
+                error: (m: string, e?: any) => { console.error(m, e); this.addLog('error', m); },
                 debug: () => {},
-                success: (m: string) => console.log(`✅ ${m}`)
+                success: (m: string) => { console.log(`✅ ${m}`); this.addLog('success', m); }
             };
 
             this.exchange = new PolymarketAdapter({
@@ -116,7 +116,7 @@ export class BotEngine {
                 return; 
             }
 
-            await this.proceedWithPostFundingSetup();
+            await this.proceedWithPostFundingSetup(engineLogger);
 
         } catch (e: any) {
             console.error(e);
@@ -131,10 +131,12 @@ export class BotEngine {
             // Use Adapter to check balance
             const funderAddr = this.exchange.getFunderAddress();
             if (!funderAddr) return false;
+            // adapter.fetchBalance now correctly queries the passed address
             const balance = await this.exchange.fetchBalance(funderAddr);
             console.log(`💰 Funding Check for ${funderAddr}: ${balance}`);
-            return balance >= 0.01; 
+            return balance >= 0.1; 
         } catch (e) {
+            console.error(e);
             return false;
         }
     }
@@ -151,12 +153,21 @@ export class BotEngine {
                 clearInterval(this.fundWatcher);
                 this.fundWatcher = undefined;
                 await this.addLog('success', '💰 Funds detected. Resuming startup...');
-                await this.proceedWithPostFundingSetup();
+                // We need to pass the logger, but since this is async detached, we recreate a basic one or store it
+                // Re-creating basic logger for simplicity
+                 const engineLogger: Logger = {
+                    info: (m: string) => { console.log(m); this.addLog('info', m); },
+                    warn: (m: string) => { console.warn(m); this.addLog('warn', m); },
+                    error: (m: string, e?: any) => { console.error(m, e); this.addLog('error', m); },
+                    debug: () => {},
+                    success: (m: string) => { console.log(`✅ ${m}`); this.addLog('success', m); }
+                };
+                await this.proceedWithPostFundingSetup(engineLogger);
             }
         }, 30000); 
     }
 
-    private async proceedWithPostFundingSetup() {
+    private async proceedWithPostFundingSetup(logger: Logger) {
         try {
             if(!this.exchange) return;
 
@@ -167,7 +178,7 @@ export class BotEngine {
             await this.exchange.authenticate();
 
             // 3. Start Services
-            this.startServices();
+            this.startServices(logger);
 
         } catch (e: any) {
             console.error(e);
@@ -176,7 +187,7 @@ export class BotEngine {
         }
     }
 
-    private async startServices() {
+    private async startServices(logger: Logger) {
         if(!this.exchange) return;
 
         const runtimeEnv: any = {
@@ -190,42 +201,33 @@ export class BotEngine {
             twilioFromNumber: process.env.TWILIO_FROM_NUMBER
         };
         
-        const serviceLogger: Logger = {
-            info: (m: string) => console.log(m),
-            warn: (m: string) => console.warn(m),
-            error: (m: string, e?: any) => console.error(m, e),
-            debug: () => {},
-            success: (m: string) => console.log(`✅ ${m}`)
-        };
-
         // EXECUTOR - Uses Adapter
-        const signer = this.exchange.getSigner(); 
         const funder = this.exchange.getFunderAddress();
 
-        if (!signer || !funder) {
-            throw new Error("Adapter initialization incomplete. Missing client components.");
+        if (!funder) {
+            throw new Error("Adapter initialization incomplete. Missing funder address.");
         }
 
         this.executor = new TradeExecutorService({
             adapter: this.exchange,
             proxyWallet: funder,
             env: runtimeEnv,
-            logger: serviceLogger
+            logger: logger
         });
 
         this.stats.allowanceApproved = true; 
 
-        // FUND MANAGER - Uses generic signer for now
+        // FUND MANAGER - Uses Adapter
         const fundManager = new FundManagerService(
-            signer, 
+            this.exchange,
+            funder,
             {
                 enabled: this.config.autoCashout?.enabled || false,
                 maxRetentionAmount: this.config.autoCashout?.maxAmount,
                 destinationAddress: this.config.autoCashout?.destinationAddress,
-                usdcContractAddress: USDC_BRIDGED_POLYGON
             },
-            serviceLogger,
-            new NotificationService(runtimeEnv, serviceLogger)
+            logger,
+            new NotificationService(runtimeEnv, logger)
         );
 
         try {
@@ -237,7 +239,7 @@ export class BotEngine {
         this.monitor = new TradeMonitorService({
             adapter: this.exchange,
             env: { ...runtimeEnv, fetchIntervalSeconds: 2, aggregationWindowSeconds: 300 },
-            logger: serviceLogger,
+            logger: logger,
             userAddresses: this.config.userAddresses,
             onDetectedTrade: async (signal) => {
                 if (!this.isRunning) return;
@@ -317,31 +319,29 @@ export class BotEngine {
         
         for (const pos of positionsToCheck) {
             try {
-                try {
-                    const market = await getMarket(pos.marketId);
-                    if ((market as any).closed || (market as any).active === false) {
-                        this.activePositions = this.activePositions.filter(p => p.tokenId !== pos.tokenId);
-                        if (this.callbacks?.onPositionsUpdate) await this.callbacks.onPositionsUpdate(this.activePositions);
-                        continue;
-                    }
-                } catch (e) { continue; }
-  
-                // Use Adapter to get Orderbook for price check
-                const orderBook = await this.exchange.getOrderBook(pos.tokenId);
-                if (orderBook.bids && orderBook.bids.length > 0) {
-                    const bestBid = orderBook.bids[0].price;
-                    const gainPercent = ((bestBid - pos.entryPrice) / pos.entryPrice) * 100;
-                    
-                    if (gainPercent >= this.config.autoTp) {
-                        await this.addLog('success', `🎯 Auto TP Hit! ${pos.outcome} is up +${gainPercent.toFixed(1)}%`);
-                        const success = await this.executor.executeManualExit(pos, bestBid);
-                        if (success) {
-                            this.activePositions = this.activePositions.filter(p => p.tokenId !== pos.tokenId);
-                            if (this.callbacks?.onPositionsUpdate) await this.callbacks.onPositionsUpdate(this.activePositions);
-                            
-                            const realPnl = pos.sizeUsd * (gainPercent / 100);
-                            this.stats.totalPnl = (this.stats.totalPnl || 0) + realPnl;
-                            if(this.callbacks?.onStatsUpdate) await this.callbacks.onStatsUpdate(this.stats);
+                // Use Adapter to get Market Data (Checking active status)
+                // Note: getMarketPrice is a simple check, for detailed market status we might need an adapter extension later
+                // For now, let's assume active if price is > 0
+                const currentPrice = await this.exchange.getMarketPrice(pos.marketId, pos.tokenId);
+                
+                if (currentPrice > 0) {
+                    // Check orderbook bids for exit liquidity
+                    const orderBook = await this.exchange.getOrderBook(pos.tokenId);
+                    if (orderBook.bids && orderBook.bids.length > 0) {
+                        const bestBid = orderBook.bids[0].price;
+                        const gainPercent = ((bestBid - pos.entryPrice) / pos.entryPrice) * 100;
+                        
+                        if (gainPercent >= this.config.autoTp) {
+                            await this.addLog('success', `🎯 Auto TP Hit! ${pos.outcome} is up +${gainPercent.toFixed(1)}%`);
+                            const success = await this.executor.executeManualExit(pos, bestBid);
+                            if (success) {
+                                this.activePositions = this.activePositions.filter(p => p.tokenId !== pos.tokenId);
+                                if (this.callbacks?.onPositionsUpdate) await this.callbacks.onPositionsUpdate(this.activePositions);
+                                
+                                const realPnl = pos.sizeUsd * (gainPercent / 100);
+                                this.stats.totalPnl = (this.stats.totalPnl || 0) + realPnl;
+                                if(this.callbacks?.onStatsUpdate) await this.callbacks.onStatsUpdate(this.stats);
+                            }
                         }
                     }
                 }

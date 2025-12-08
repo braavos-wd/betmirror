@@ -4,21 +4,24 @@ import {
     OrderParams
 } from '../interfaces.js';
 import { OrderBook } from '../../domain/market.types.js';
+import { TradeSignal } from '../../domain/trade.types.js';
 import { ClobClient, Chain, OrderType, Side } from '@polymarket/clob-client';
-import { Wallet, JsonRpcProvider, Contract, MaxUint256 } from 'ethers';
+import { Wallet, JsonRpcProvider, Contract, MaxUint256, formatUnits, parseUnits } from 'ethers';
 import { ZeroDevService } from '../../services/zerodev.service.js';
 import { ProxyWalletConfig } from '../../domain/wallet.types.js';
 import { User } from '../../database/index.js';
 import { BuilderConfig } from '@polymarket/builder-signing-sdk';
-import { getUsdBalanceApprox } from '../../utils/get-balance.util.js';
 import { Logger } from '../../utils/logger.util.js';
+import axios from 'axios';
 
 // --- CONSTANTS ---
 const USDC_BRIDGED_POLYGON = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
 const POLYMARKET_EXCHANGE = '0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E';
 const USDC_ABI = [
   'function allowance(address owner, address spender) view returns (uint256)',
-  'function approve(address spender, uint256 amount) returns (bool)'
+  'function approve(address spender, uint256 amount) returns (bool)',
+  'function balanceOf(address owner) view returns (uint256)',
+  'function transfer(address to, uint256 amount) returns (bool)'
 ];
 
 // --- ADAPTER: Ethers V6 Wallet -> V5 Compatibility ---
@@ -35,6 +38,19 @@ enum SignatureType {
     EOA = 0,
     POLY_PROXY = 1,
     POLY_GNOSIS_SAFE = 2
+}
+
+interface PolyActivityResponse {
+  type: string;
+  timestamp: number;
+  conditionId: string;
+  asset: string;
+  size: number;
+  usdcSize: number;
+  price: number;
+  side: string;
+  outcomeIndex: number;
+  transactionHash: string;
 }
 
 export class PolymarketAdapter implements IExchangeAdapter {
@@ -91,6 +107,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
         }
 
         // 2. Setup USDC Contract for Allowance Checks
+        // Note: Using signerImpl means we can read state, but writes must go through ZeroDev if it's a Smart Account
         this.usdcContract = new Contract(USDC_BRIDGED_POLYGON, USDC_ABI, this.signerImpl);
     }
 
@@ -100,6 +117,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
             try {
                 this.logger.info('🔄 Verifying Smart Account Deployment...');
                 // Idempotent "Approve 0" tx to force deployment if needed
+                // We use the serialized session key because that's what the AA SDK expects
                 await this.zdService.sendTransaction(
                     this.config.walletConfig.serializedSessionKey,
                     USDC_BRIDGED_POLYGON,
@@ -107,6 +125,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
                     'approve',
                     [this.funderAddress, 0]
                 );
+                this.logger.success('✅ Smart Account Ready.');
                 return true;
             } catch (e: any) {
                 this.logger.warn(`Deployment check note: ${e.message}`);
@@ -155,7 +174,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 throw e;
             }
         } else {
-             this.logger.info('🔑 Using cached credentials.');
+             this.logger.info('🔌 Connecting to CLOB...');
         }
 
         // Initialize Real Client
@@ -192,8 +211,17 @@ export class PolymarketAdapter implements IExchangeAdapter {
             const allowance = await this.usdcContract.allowance(this.funderAddress, POLYMARKET_EXCHANGE);
             if (allowance < BigInt(1000000 * 1000)) {
                 this.logger.info('🔓 Approving USDC for Trading...');
-                const tx = await this.usdcContract.approve(POLYMARKET_EXCHANGE, MaxUint256);
-                await tx.wait();
+                
+                if (this.zdService) {
+                    // Send via ZeroDev (Smart Account)
+                    await this.zdService.sendTransaction(
+                        this.config.walletConfig.serializedSessionKey,
+                        USDC_BRIDGED_POLYGON,
+                        USDC_ABI,
+                        'approve',
+                        [POLYMARKET_EXCHANGE, MaxUint256]
+                    );
+                }
                 this.logger.success('✅ Approved.');
             }
         } catch(e) { 
@@ -202,7 +230,14 @@ export class PolymarketAdapter implements IExchangeAdapter {
     }
 
     async fetchBalance(address: string): Promise<number> {
-        return await getUsdBalanceApprox(this.signerImpl, USDC_BRIDGED_POLYGON);
+        // BUG FIX: Use the specific address passed in (the funder/smart account), NOT the signer's address
+        if (!this.usdcContract) return 0;
+        try {
+            const balanceBigInt = await this.usdcContract.balanceOf(address);
+            return parseFloat(formatUnits(balanceBigInt, 6));
+        } catch (e) {
+            return 0;
+        }
     }
 
     async getMarketPrice(marketId: string, tokenId: string): Promise<number> {
@@ -224,6 +259,37 @@ export class PolymarketAdapter implements IExchangeAdapter {
             bids: book.bids.map(b => ({ price: parseFloat(b.price), size: parseFloat(b.size) })),
             asks: book.asks.map(a => ({ price: parseFloat(a.price), size: parseFloat(a.size) }))
         };
+    }
+
+    async fetchPublicTrades(address: string, limit: number = 20): Promise<TradeSignal[]> {
+        // Implementation of Gap 1: Moving Data API calls into Adapter
+        try {
+            const url = `https://data-api.polymarket.com/activity?user=${address}&limit=${limit}`;
+            const res = await axios.get<PolyActivityResponse[]>(url);
+            
+            if (!res.data || !Array.isArray(res.data)) return [];
+
+            const trades: TradeSignal[] = [];
+            for (const act of res.data) {
+                if (act.type === 'TRADE' || act.type === 'ORDER_FILLED') {
+                     const activityTime = typeof act.timestamp === 'number' ? act.timestamp : Math.floor(new Date(act.timestamp).getTime() / 1000);
+                     
+                     trades.push({
+                         trader: address,
+                         marketId: act.conditionId,
+                         tokenId: act.asset,
+                         outcome: act.outcomeIndex === 0 ? 'YES' : 'NO',
+                         side: act.side.toUpperCase() as 'BUY' | 'SELL',
+                         sizeUsd: act.usdcSize || (act.size * act.price),
+                         price: act.price,
+                         timestamp: activityTime * 1000,
+                     });
+                }
+            }
+            return trades;
+        } catch (e) {
+            return [];
+        }
     }
 
     async createOrder(params: OrderParams): Promise<string> {
@@ -250,7 +316,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
 
             const level = currentLevels[0];
             const levelPrice = parseFloat(level.price);
-            const levelSize = parseFloat(level.size);
 
             // Price Protection
             if (isBuy && params.priceLimit && levelPrice > params.priceLimit) break;
@@ -260,12 +325,12 @@ export class PolymarketAdapter implements IExchangeAdapter {
             let orderValue: number;
 
             if (isBuy) {
-                const levelValue = levelSize * levelPrice;
+                const levelValue = parseFloat(level.size) * levelPrice;
                 orderValue = Math.min(remaining, levelValue);
                 orderSize = orderValue / levelPrice;
             } else {
                 // For Sell, sizeUsd is essentially the value we want to exit
-                const levelValue = levelSize * levelPrice;
+                const levelValue = parseFloat(level.size) * levelPrice;
                 orderValue = Math.min(remaining, levelValue);
                 orderSize = orderValue / levelPrice;
             }
@@ -290,8 +355,9 @@ export class PolymarketAdapter implements IExchangeAdapter {
                     remaining -= orderValue;
                     retryCount = 0;
                     lastTx = response.orderID || "filled";
+                    
+                    // Simple logging here, more detailed logging is handled by caller via Logger
                 } else {
-                    this.logger.warn(`FOK Failed. Retrying...`);
                     retryCount++;
                 }
             } catch (error: any) {
@@ -317,10 +383,26 @@ export class PolymarketAdapter implements IExchangeAdapter {
     }
 
     async cashout(amount: number, destination: string): Promise<string> {
-        // This should delegate to FundManagerService logic ideally, 
-        // but can be implemented here if we want the Adapter to handle withdrawals too.
-        // For now, return empty as FundManager handles this via ZeroDevService directly.
-        return "";
+        // Implementation of Gap 2: Adapter handling withdrawals via ZeroDev
+        if (!this.zdService || !this.funderAddress) {
+            throw new Error("Smart Account service not initialized");
+        }
+        
+        this.logger.info(`💸 Adapters initiating cashout of $${amount} to ${destination}`);
+        
+        const amountUnits = parseUnits(amount.toFixed(6), 6);
+        
+        // Use ZeroDev Service to construct and sign the UserOp
+        // We use the 'transfer' call on the USDC contract
+        const txHash = await this.zdService.sendTransaction(
+            this.config.walletConfig.serializedSessionKey,
+            USDC_BRIDGED_POLYGON,
+            USDC_ABI,
+            'transfer',
+            [destination, amountUnits]
+        );
+        
+        return txHash;
     }
     
     // Legacy Accessors

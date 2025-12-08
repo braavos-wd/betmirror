@@ -1,5 +1,6 @@
 
 import { OrderBook } from '../domain/market.types';
+import { TradeSignal } from '../domain/trade.types';
 
 export type OrderSide = 'BUY' | 'SELL';
 
@@ -30,6 +31,10 @@ export interface IExchangeAdapter {
     fetchBalance(address: string): Promise<number>;
     getMarketPrice(marketId: string, tokenId: string): Promise<number>;
     getOrderBook(tokenId: string): Promise<OrderBook>;
+    
+    // Monitoring
+    // Returns normalized TradeSignals for the monitoring loop
+    fetchPublicTrades(address: string, limit?: number): Promise<TradeSignal[]>;
 
     // Execution
     createOrder(params: OrderParams): Promise<string>; // Returns Order ID / Tx Hash

@@ -13,6 +13,21 @@ import { AlphaRegistryService } from '../services/alpha-registry.service.js';
 import { IExchangeAdapter, OrderParams } from '../adapters/interfaces.js';
 import { OrderBook } from '../domain/market.types.js';
 import { Side, OrderType } from '@polymarket/clob-client';
+import axios from 'axios';
+import { TradeSignal } from '../domain/trade.types.js';
+
+interface PolyActivityResponse {
+  type: string;
+  timestamp: number;
+  conditionId: string;
+  asset: string;
+  size: number;
+  usdcSize: number;
+  price: number;
+  side: string;
+  outcomeIndex: number;
+  transactionHash: string;
+}
 
 async function main(): Promise<void> {
   const logger = new ConsoleLogger();
@@ -63,6 +78,35 @@ async function main(): Promise<void> {
             asks: book.asks.map(a => ({ price: parseFloat(a.price), size: parseFloat(a.size) }))
           };
       },
+      fetchPublicTrades: async (address: string, limit: number = 20): Promise<TradeSignal[]> => {
+        try {
+            const url = `https://data-api.polymarket.com/activity?user=${address}&limit=${limit}`;
+            const res = await axios.get<PolyActivityResponse[]>(url);
+            
+            if (!res.data || !Array.isArray(res.data)) return [];
+
+            const trades: TradeSignal[] = [];
+            for (const act of res.data) {
+                if (act.type === 'TRADE' || act.type === 'ORDER_FILLED') {
+                     const activityTime = typeof act.timestamp === 'number' ? act.timestamp : Math.floor(new Date(act.timestamp).getTime() / 1000);
+                     
+                     trades.push({
+                         trader: address,
+                         marketId: act.conditionId,
+                         tokenId: act.asset,
+                         outcome: act.outcomeIndex === 0 ? 'YES' : 'NO',
+                         side: act.side.toUpperCase() as 'BUY' | 'SELL',
+                         sizeUsd: act.usdcSize || (act.size * act.price),
+                         price: act.price,
+                         timestamp: activityTime * 1000,
+                     });
+                }
+            }
+            return trades;
+        } catch (e) {
+            return [];
+        }
+      },
       createOrder: async (params: OrderParams): Promise<string> => {
           const isBuy = params.side === 'BUY';
           const orderSide = isBuy ? Side.BUY : Side.SELL;
@@ -109,13 +153,12 @@ async function main(): Promise<void> {
   const fundManagerConfig: FundManagerConfig = {
       enabled: env.enableAutoCashout,
       maxRetentionAmount: env.maxRetentionAmount,
-      destinationAddress: env.mainWalletAddress,
-      usdcContractAddress: env.usdcContractAddress
+      destinationAddress: env.mainWalletAddress
   };
 
   const registryService = new AlphaRegistryService(env.registryApiUrl);
 
-  const fundManager = new FundManagerService(client.wallet, fundManagerConfig, logger, notifier);
+  const fundManager = new FundManagerService(adapter, client.wallet.address, fundManagerConfig, logger, notifier);
   const feeDistributor = new FeeDistributorService(client.wallet, env, logger, registryService);
 
   try {

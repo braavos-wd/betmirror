@@ -1,36 +1,30 @@
 
-import { Wallet, Contract, formatUnits, parseUnits } from 'ethers';
+import { Wallet } from 'ethers';
 import { Logger } from '../utils/logger.util.js';
 import { NotificationService } from './notification.service.js';
 import { CashoutRecord } from '../domain/alpha.types.js';
-
-const USDC_ABI = [
-  'function balanceOf(address owner) view returns (uint256)',
-  'function transfer(address to, uint256 amount) returns (bool)',
-];
+import { IExchangeAdapter } from '../adapters/interfaces.js';
 
 export interface FundManagerConfig {
   enabled: boolean;
   maxRetentionAmount?: number;
   destinationAddress?: string;
-  usdcContractAddress: string;
+  // contract address no longer needed here, adapter handles it
 }
 
 export class FundManagerService {
-  private usdcContract: Contract;
   
   // OPTIMIZATION: Throttle balance checks to avoid RPC Limits
   private lastCheckTime: number = 0;
   private readonly THROTTLE_MS = 60 * 60 * 1000; // Check max once per hour unless forced
 
   constructor(
-    private wallet: Wallet,
+    private adapter: IExchangeAdapter,
+    private funderAddress: string,
     private config: FundManagerConfig,
     private logger: Logger,
     private notifier: NotificationService
-  ) {
-    this.usdcContract = new Contract(config.usdcContractAddress, USDC_ABI, wallet);
-  }
+  ) {}
 
   async checkAndSweepProfits(force: boolean = false): Promise<CashoutRecord | null> {
     if (!this.config.enabled || !this.config.destinationAddress || !this.config.maxRetentionAmount) {
@@ -45,8 +39,8 @@ export class FundManagerService {
     this.lastCheckTime = Date.now();
 
     try {
-      const balanceBigInt = await this.usdcContract.balanceOf(this.wallet.address);
-      const balance = parseFloat(formatUnits(balanceBigInt, 6));
+      // Use Adapter to fetch balance
+      const balance = await this.adapter.fetchBalance(this.funderAddress);
 
       this.logger.info(`🏦 Vault Check: Proxy Balance $${balance.toFixed(2)} (Cap: $${this.config.maxRetentionAmount})`);
 
@@ -58,20 +52,17 @@ export class FundManagerService {
 
         this.logger.info(`💸 Sweeping excess funds: $${sweepAmount.toFixed(2)} -> ${this.config.destinationAddress}`);
 
-        const amountInUnits = parseUnits(sweepAmount.toFixed(6), 6);
+        // Use Adapter to execute cashout
+        const txHash = await this.adapter.cashout(sweepAmount, this.config.destinationAddress);
         
-        const tx = await this.usdcContract.transfer(this.config.destinationAddress, amountInUnits);
-        this.logger.info(`⏳ Cashout Tx Sent: ${tx.hash}`);
-        
-        await tx.wait();
-        this.logger.info(`✅ Cashout Confirmed!`);
+        this.logger.info(`✅ Cashout Tx: ${txHash}`);
 
-        await this.notifier.sendCashoutAlert(sweepAmount, tx.hash);
+        await this.notifier.sendCashoutAlert(sweepAmount, txHash);
 
         return {
-            id: tx.hash,
+            id: txHash,
             amount: sweepAmount,
-            txHash: tx.hash,
+            txHash: txHash,
             destination: this.config.destinationAddress,
             timestamp: new Date().toISOString()
         };

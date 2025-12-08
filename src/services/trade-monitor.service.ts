@@ -1,9 +1,7 @@
 
-import type { RuntimeEnv } from '../config/env.js';
-import type { Logger } from '../utils/logger.util.js';
-import type { TradeSignal } from '../domain/trade.types.js';
-import { httpGet } from '../utils/http.js';
-import axios from 'axios';
+import { RuntimeEnv } from '../config/env.js';
+import { Logger } from '../utils/logger.util.js';
+import { TradeSignal } from '../domain/trade.types.js';
 import { IExchangeAdapter } from '../adapters/interfaces.js';
 
 export type TradeMonitorDeps = {
@@ -13,19 +11,6 @@ export type TradeMonitorDeps = {
   userAddresses: string[];
   onDetectedTrade: (signal: TradeSignal) => Promise<void>;
 };
-
-interface ActivityResponse {
-  type: string;
-  timestamp: number;
-  conditionId: string;
-  asset: string;
-  size: number;
-  usdcSize: number;
-  price: number;
-  side: string;
-  outcomeIndex: number;
-  transactionHash: string;
-}
 
 export class TradeMonitorService {
   private readonly deps: TradeMonitorDeps;
@@ -63,11 +48,7 @@ export class TradeMonitorService {
         try {
             await this.tick();
         } catch (e: any) {
-            if (e.code === 'ECONNRESET' || e.message?.includes('socket hang up')) {
-                 // Silent retry
-            } else {
-                console.error("[Monitor] Tick Error:", e.message);
-            }
+             // Silent retry
         } finally {
             this.isPolling = false;
         }
@@ -106,46 +87,35 @@ export class TradeMonitorService {
 
   private async fetchTraderActivities(trader: string, env: RuntimeEnv, now: number, cutoffTime: number): Promise<void> {
     try {
-      // Direct Data API polling (Efficient for public activity monitoring)
-      // Future: Move this to Adapter.fetchPublicActivity(trader)
-      const url = `https://data-api.polymarket.com/activity?user=${trader}&limit=20`;
-      const activities: ActivityResponse[] = await httpGet<ActivityResponse[]>(url);
+      // Use Adapter to fetch trades (Decoupled from specific API)
+      const trades = await this.deps.adapter.fetchPublicTrades(trader, 20);
 
-      if (!activities || !Array.isArray(activities)) return;
+      if (!trades || !Array.isArray(trades)) return;
 
-      for (const activity of activities) {
-        if (activity.type !== 'TRADE' && activity.type !== 'ORDER_FILLED') continue;
-
-        const activityTime = typeof activity.timestamp === 'number' ? activity.timestamp : Math.floor(new Date(activity.timestamp).getTime() / 1000);
+      for (const signal of trades) {
+        // Validation logic
+        const activityTime = signal.timestamp / 1000; // Convert back to seconds for logic
         
         if (activityTime < cutoffTime) continue;
-        if (this.processedHashes.has(activity.transactionHash)) continue;
+        
+        // Use a hash of unique properties since adapter might not return raw txHash in generic interface
+        // But assuming signal generation is stable:
+        const uniqueId = `${signal.marketId}-${signal.outcome}-${signal.price}-${signal.timestamp}`; 
+        
+        if (this.processedHashes.has(uniqueId)) continue;
 
         const lastTime = this.lastFetchTime.get(trader) || 0;
         if (activityTime <= lastTime) continue;
 
-        const signal: TradeSignal = {
-          trader,
-          marketId: activity.conditionId,
-          tokenId: activity.asset,
-          outcome: activity.outcomeIndex === 0 ? 'YES' : 'NO',
-          side: activity.side.toUpperCase() as 'BUY' | 'SELL',
-          sizeUsd: activity.usdcSize || (activity.size * activity.price),
-          price: activity.price,
-          timestamp: activityTime * 1000,
-        };
-
         this.deps.logger.info(`[SIGNAL] ${signal.side} ${signal.outcome} @ ${signal.price} ($${signal.sizeUsd.toFixed(0)}) from ${trader.slice(0,6)}`);
 
-        this.processedHashes.set(activity.transactionHash, activityTime);
+        this.processedHashes.set(uniqueId, activityTime);
         this.lastFetchTime.set(trader, Math.max(this.lastFetchTime.get(trader) || 0, activityTime));
 
         await this.deps.onDetectedTrade(signal);
       }
     } catch (err) {
-      if (axios.isAxiosError(err) && err.response?.status === 404) {
-        return; 
-      }
+       // Ignore
     }
   }
 }
