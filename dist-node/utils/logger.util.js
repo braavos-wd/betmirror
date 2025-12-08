@@ -18,4 +18,8 @@ export class ConsoleLogger {
             console.debug(chalk.gray('[DEBUG]'), msg);
         }
     }
+    success(msg) {
+        // eslint-disable-next-line no-console
+        console.log(chalk.green('[SUCCESS]'), msg);
+    }
 }

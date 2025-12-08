@@ -18,6 +18,8 @@ export interface FundManagerConfig {
 
 export class FundManagerService {
   private usdcContract: Contract;
+  
+  // OPTIMIZATION: Throttle balance checks to avoid RPC Limits
   private lastCheckTime: number = 0;
   private readonly THROTTLE_MS = 60 * 60 * 1000; // Check max once per hour unless forced
 
@@ -35,7 +37,8 @@ export class FundManagerService {
       return null;
     }
 
-    // THROTTLING: Avoid hitting RPC limits with frequent balance checks
+    // THROTTLING CHECK: Avoid hitting RPC limits with frequent balance checks
+    // If not forced (manual trigger), enforce 1 hour delay between checks
     if (!force && Date.now() - this.lastCheckTime < this.THROTTLE_MS) {
         return null;
     }
@@ -50,7 +53,7 @@ export class FundManagerService {
       if (balance > this.config.maxRetentionAmount) {
         const sweepAmount = balance - this.config.maxRetentionAmount;
         
-        // Safety check: Don't sweep tiny dust (e.g. < $10)
+        // Safety check: Don't sweep tiny dust (e.g. < $10) to save gas/spam
         if (sweepAmount < 10) return null;
 
         this.logger.info(`💸 Sweeping excess funds: $${sweepAmount.toFixed(2)} -> ${this.config.destinationAddress}`);

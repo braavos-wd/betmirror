@@ -5,6 +5,7 @@ export interface Logger {
   warn: (msg: string) => void;
   error: (msg: string, err?: Error) => void;
   debug: (msg: string) => void;
+  success: (msg: string) => void;
 }
 
 export class ConsoleLogger implements Logger {
@@ -26,5 +27,8 @@ export class ConsoleLogger implements Logger {
       console.debug(chalk.gray('[DEBUG]'), msg);
     }
   }
+  success(msg: string): void {
+    // eslint-disable-next-line no-console
+    console.log(chalk.green('[SUCCESS]'), msg);
+  }
 }
-

@@ -1,5 +1,5 @@
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 
 export interface AnalysisResult {
   shouldCopy: boolean;
@@ -57,7 +57,7 @@ export class AiAgentService {
     `;
 
     try {
-      const response = await ai.models.generateContent({
+      const response: GenerateContentResponse = await ai.models.generateContent({
         model: this.model,
         contents: prompt,
         config: {

@@ -30,8 +30,11 @@ interface ActivityResponse {
 export class TradeMonitorService {
   private readonly deps: TradeMonitorDeps;
   private timer: any;
-  // UPGRADE: Use Map<Hash, Timestamp> for memory management instead of infinite Set
+  
+  // UPGRADE: Use Map<Hash, Timestamp> for LRU pruning instead of infinite Set
+  // This ensures the bot doesn't crash from OOM after running for weeks.
   private readonly processedHashes: Map<string, number> = new Map();
+  
   private readonly lastFetchTime: Map<string, number> = new Map();
   private isPolling = false;
 
@@ -64,7 +67,7 @@ export class TradeMonitorService {
         } catch (e: any) {
             // Critical: Catch socket hang ups here so the interval doesn't die
             if (e.code === 'ECONNRESET' || e.message?.includes('socket hang up')) {
-                // this.deps.logger.warn(`[Monitor] Connection reset. Retrying next tick.`);
+                 // Silent retry
             } else {
                 console.error("[Monitor] Tick Error:", e.message);
             }
@@ -84,8 +87,9 @@ export class TradeMonitorService {
     const now = Math.floor(Date.now() / 1000);
     const cutoffTime = now - Math.max(env.aggregationWindowSeconds, 600); 
 
-    // MEMORY OPTIMIZATION: Prune old hashes
-    if (this.processedHashes.size > 1000) {
+    // MEMORY OPTIMIZATION: Prune old hashes (LRU-like)
+    // If cache gets too big, remove entries older than the window
+    if (this.processedHashes.size > 2000) {
         for (const [hash, ts] of this.processedHashes.entries()) {
             if (ts < cutoffTime) {
                 this.processedHashes.delete(hash);
@@ -117,9 +121,13 @@ export class TradeMonitorService {
 
         const activityTime = typeof activity.timestamp === 'number' ? activity.timestamp : Math.floor(new Date(activity.timestamp).getTime() / 1000);
         
+        // Skip old trades
         if (activityTime < cutoffTime) continue;
+        
+        // Skip already processed
         if (this.processedHashes.has(activity.transactionHash)) continue;
 
+        // Skip trades before start cursor
         const lastTime = this.lastFetchTime.get(trader) || 0;
         if (activityTime <= lastTime) continue;
 
@@ -136,7 +144,10 @@ export class TradeMonitorService {
 
         this.deps.logger.info(`[SIGNAL] ${signal.side} ${signal.outcome} @ ${signal.price} ($${signal.sizeUsd.toFixed(0)}) from ${trader.slice(0,6)}`);
 
+        // Mark as processed
         this.processedHashes.set(activity.transactionHash, activityTime);
+        
+        // Update high-water mark
         this.lastFetchTime.set(trader, Math.max(this.lastFetchTime.get(trader) || 0, activityTime));
 
         await this.deps.onDetectedTrade(signal);
@@ -145,7 +156,6 @@ export class TradeMonitorService {
       if (axios.isAxiosError(err) && err.response?.status === 404) {
         return; 
       }
-      // Silent fail for minor networking issues
     }
   }
 }

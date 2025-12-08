@@ -42,6 +42,14 @@ async function startUserBot(userId: string, config: BotConfig) {
         ACTIVE_BOTS.get(normId)?.stop();
     }
 
+    // --- CRITICAL CHECK ---
+    // If the user hasn't migrated to the new Session Key system (EOA Signer),
+    // we cannot start the bot. Skip it to avoid "Missing Private Key" crash loops.
+    if (config.walletConfig?.type === 'SMART_ACCOUNT' && !config.walletConfig.sessionPrivateKey) {
+        console.warn(`[SKIP] Bot ${normId} skipped. Requires 'RESTORE SESSION' to generate new keys.`);
+        return;
+    }
+
     const startCursor = config.startCursor || Math.floor(Date.now() / 1000);
     const engineConfig = { ...config, userId: normId, startCursor };
 
@@ -83,8 +91,7 @@ async function startUserBot(userId: string, config: BotConfig) {
     });
 
     ACTIVE_BOTS.set(normId, engine);
-    // Non-blocking start to prevent server stall on funding checks
-    // We catch errors to ensure one bot failing doesn't crash the server
+    // Non-blocking start
     engine.start().catch(err => console.error(`[Bot Error] ${normId}:`, err.message));
 }
 
@@ -109,8 +116,13 @@ app.post('/api/wallet/status', async (req: any, res: any) => {
   try {
       const user = await User.findOne({ address: normId });
       
+      // Check if user exists AND has the new session private key
+      // If they have proxyWallet but NO private key, force re-activation
       if (!user || !user.proxyWallet) {
         res.json({ status: 'NEEDS_ACTIVATION' });
+      } else if (user.proxyWallet.type === 'SMART_ACCOUNT' && !user.proxyWallet.sessionPrivateKey) {
+         // Migration path for existing users
+         res.json({ status: 'NEEDS_ACTIVATION', address: user.proxyWallet.address });
       } else {
         res.json({ 
             status: 'ACTIVE', 
@@ -274,6 +286,12 @@ app.post('/api/bot/start', async (req: any, res: any) => {
           return; 
       }
 
+      // Check for missing key AGAIN - Double protection
+      if (!user.proxyWallet.sessionPrivateKey && user.proxyWallet.type === 'SMART_ACCOUNT') {
+          res.status(400).json({ error: "Session Key outdated. Please click 'RESTORE SESSION' to update." });
+          return;
+      }
+
       // --- EXTRACT L2 CREDENTIALS FROM DB ---
       // This is crucial for the "Use API Keys" step
       const l2Creds = user.proxyWallet.l2ApiCredentials;
@@ -294,6 +312,7 @@ app.post('/api/bot/start', async (req: any, res: any) => {
         stats: user.stats,
         // PASS ENV VARS
         zeroDevRpc: ENV.zeroDevRpc,
+        zeroDevPaymasterRpc: ENV.zeroDevPaymasterRpc,
         // PASS CREDENTIALS
         l2ApiCredentials: l2Creds,
         startCursor: Math.floor(Date.now() / 1000) 
@@ -484,11 +503,10 @@ async function restoreBots() {
                      activePositions: user.activePositions,
                      startCursor: lastTime,
                      l2ApiCredentials: l2Creds, // Pass restored creds
-                     zeroDevRpc: ENV.zeroDevRpc
+                     zeroDevRpc: ENV.zeroDevRpc,
+                     zeroDevPaymasterRpc: ENV.zeroDevPaymasterRpc
                  };
                  
-                 // Use startUserBot but don't await potentially long-running startup if it were blocking
-                 // But startUserBot awaits engine.start(), so engine.start must be non-blocking.
                  try {
                     await startUserBot(user.address, config);
                     console.log(`✅ Restored Bot: ${user.address} (Has L2 Creds: ${!!l2Creds})`);
