@@ -77,18 +77,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
             builderApiPassphrase?: string;
         },
         private logger: Logger
-    ) {
-        // --- STEALTH MODE: Bypass Cloudflare WAF ---
-        // The SDK sets a default User-Agent that gets blocked. We override it globally here.
-        axios.interceptors.request.use(request => {
-            request.headers['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-            request.headers['Referer'] = 'https://polymarket.com/';
-            request.headers['Origin'] = 'https://polymarket.com';
-            request.headers['Accept'] = 'application/json, text/plain, */*';
-            request.headers['Accept-Language'] = 'en-US,en;q=0.9';
-            return request;
-        });
-    }
+    ) {}
 
     async initialize(): Promise<void> {
         this.logger.info(`[${this.exchangeName}] Initializing Adapter...`);
@@ -147,6 +136,19 @@ export class PolymarketAdapter implements IExchangeAdapter {
     }
 
     async authenticate(): Promise<void> {
+        // Setup Stealth Options (Browser Fingerprinting) - Currently unused due to library constraints
+        /*
+        const stealthOptions = {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Origin': 'https://polymarket.com',
+                'Referer': 'https://polymarket.com/',
+                'Accept': 'application/json, text/plain, * /*',
+                'Accept-Language': 'en-US,en;q=0.9',
+            }
+        };
+        */
+
         // L2 Handshake Logic
         let apiCreds = this.config.l2ApiCredentials;
 
@@ -160,6 +162,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 undefined,
                 SignatureType.EOA, // Type 0
                 this.funderAddress
+                // stealthOptions was removed as it mismatches constructor signature
             );
 
             try {
@@ -208,8 +211,8 @@ export class PolymarketAdapter implements IExchangeAdapter {
             apiCreds,
             SignatureType.EOA,
             this.funderAddress,
-            undefined,
-            undefined,
+            undefined, // broadcastSocketEndpoint
+            undefined, // messageSocketEndpoint
             builderConfig
         );
         
@@ -284,8 +287,15 @@ export class PolymarketAdapter implements IExchangeAdapter {
 
     async fetchPublicTrades(address: string, limit: number = 20): Promise<TradeSignal[]> {
         try {
+            // Apply stealth headers to manual monitoring calls too
             const url = `https://data-api.polymarket.com/activity?user=${address}&limit=${limit}`;
-            const res = await axios.get<PolyActivityResponse[]>(url);
+            const res = await axios.get<PolyActivityResponse[]>(url, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Origin': 'https://polymarket.com',
+                    'Referer': 'https://polymarket.com/'
+                }
+            });
             
             if (!res.data || !Array.isArray(res.data)) return [];
 
@@ -390,7 +400,9 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 retryCount++;
             }
             
-            await new Promise(r => setTimeout(r, 200));
+            // ANTI-BOT PROTECTION: Add random jitter delay (2s - 4s) between retries
+            const jitter = Math.floor(Math.random() * 2000) + 2000;
+            await new Promise(r => setTimeout(r, jitter));
         }
         
         return lastOrderId || "failed";
