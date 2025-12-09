@@ -15,6 +15,7 @@ import axios, { AxiosInstance } from 'axios';
 import { wrapper } from 'axios-cookiejar-support';
 import { CookieJar } from 'tough-cookie';
 import * as crypto from 'crypto'; 
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 // --- CONSTANTS ---
 const USDC_BRIDGED_POLYGON = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
@@ -66,6 +67,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
     private zdService?: ZeroDevService;
     private usdcContract?: Contract;
     private cookieJar: CookieJar;
+    private httpsAgent: any;
     
     // Stored credentials for manual fallback
     private apiCreds?: { key: string; secret: string; passphrase: string };
@@ -134,7 +136,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
     private applyProxySettings() {
         const proxyUrl = this.config.proxyUrl || FALLBACK_PROXY;
         
-        // Wrap axios to support cookies
+        // Wrap axios globally to support cookies
         wrapper(axios);
         
         // Browser Emulation Headers
@@ -145,17 +147,17 @@ export class PolymarketAdapter implements IExchangeAdapter {
         axios.defaults.headers.common['Accept-Language'] = 'en-US,en;q=0.9';
         axios.defaults.headers.common['Accept-Encoding'] = 'gzip, deflate, br';
         axios.defaults.headers.common['Connection'] = 'keep-alive';
-        axios.defaults.headers.common['Sec-Ch-Ua'] = '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"';
-        axios.defaults.headers.common['Sec-Ch-Ua-Mobile'] = '?0';
-        axios.defaults.headers.common['Sec-Ch-Ua-Platform'] = '"Windows"';
-        axios.defaults.headers.common['Sec-Fetch-Dest'] = 'empty';
-        axios.defaults.headers.common['Sec-Fetch-Mode'] = 'cors';
-        axios.defaults.headers.common['Sec-Fetch-Site'] = 'same-site';
-
+        
         if (proxyUrl && proxyUrl.startsWith('http')) {
             try {
+                // Use HttpsProxyAgent for better compatibility with node-fetch/axios
+                this.httpsAgent = new HttpsProxyAgent(proxyUrl);
+                
+                // Set global axios defaults
+                axios.defaults.httpsAgent = this.httpsAgent;
+                // Also set proxy config for axios (some versions prefer this)
                 const url = new URL(proxyUrl);
-                const proxyConfig = {
+                axios.defaults.proxy = {
                     protocol: url.protocol.replace(':', ''),
                     host: url.hostname,
                     port: parseInt(url.port) || 80,
@@ -165,38 +167,24 @@ export class PolymarketAdapter implements IExchangeAdapter {
                     } : undefined
                 };
                 
-                axios.defaults.proxy = proxyConfig;
-                // Important: Some proxies need explicit Agent configuration in Node
-                // but axios.defaults.proxy usually handles the basics.
-                
                 this.logger.info(`🛡️ Proxy Configured: ${url.hostname}`);
             } catch (e) {
                 this.logger.warn(`Invalid Proxy URL: ${proxyUrl}`);
             }
         }
         
-        // Add cookie jar support
+        // Enable Cookie Jar
         // @ts-ignore
         axios.defaults.jar = this.cookieJar;
         // @ts-ignore
         axios.defaults.withCredentials = true;
-
-        // Force Headers on all requests (Interceptor)
-        axios.interceptors.request.use(config => {
-            if (config.url?.includes('polymarket.com')) {
-                config.headers['User-Agent'] = STEALTH_UA;
-                config.headers['Origin'] = 'https://polymarket.com';
-                config.headers['Referer'] = 'https://polymarket.com/';
-            }
-            return config;
-        });
     }
 
+    // Visits the homepage to acquire Cloudflare cookies
     private async warmUpCookies() {
         try {
             this.logger.info("🍪 Warming up cookies via Proxy...");
-            
-            // 1. Visit Homepage (Basic)
+            // Request the homepage to trigger WAF cookie generation
             await axios.get('https://polymarket.com/', {
                 headers: {
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -206,20 +194,39 @@ export class PolymarketAdapter implements IExchangeAdapter {
                     'Sec-Fetch-Site': 'none'
                 }
             });
-
-            // 2. Visit API specific endpoint (Trigger WAF for API path)
-            // This is key because WAF rules often differ per path
-            try {
-                await axios.get('https://clob.polymarket.com/health-check');
-            } catch(e) {}
-            
-            // Log cookies for debugging (redacted)
-            const cookies = await this.cookieJar.getCookies('https://polymarket.com');
-            const cookieNames = cookies.map(c => c.key).join(', ');
-            this.logger.info(`✅ Cookies acquired: [${cookieNames || 'None'}]`);
-            
+            this.logger.info("✅ Cookies secured.");
         } catch (e) {
-            this.logger.warn("Cookie warm-up response: " + (e as Error).message);
+             // 403 on homepage might still return cookies in headers
+             // We continue, relying on the jar to have captured anything sent back
+             if (e instanceof Error && e.message.includes('403')) {
+                  this.logger.info("✅ Cookies captured (from 403 challenge).");
+             } else {
+                  this.logger.warn("Cookie warm-up error: " + (e as Error).message);
+             }
+        }
+    }
+    
+    // Inject our settings into a ClobClient instance
+    private patchClient(client: any) {
+        try {
+            // 1. Patch Axios Instance if it exists
+            if (client.axiosInstance) {
+                 client.axiosInstance.defaults.jar = this.cookieJar;
+                 client.axiosInstance.defaults.withCredentials = true;
+                 client.axiosInstance.defaults.httpsAgent = this.httpsAgent;
+                 client.axiosInstance.defaults.proxy = axios.defaults.proxy;
+                 client.axiosInstance.defaults.headers['User-Agent'] = axios.defaults.headers.common['User-Agent'];
+            }
+            // 2. Patch internal httpClient if it exists
+            if (client.httpClient) {
+                 client.httpClient.defaults.jar = this.cookieJar;
+                 client.httpClient.defaults.withCredentials = true;
+                 client.httpClient.defaults.httpsAgent = this.httpsAgent;
+                 client.httpClient.defaults.proxy = axios.defaults.proxy;
+                 client.httpClient.defaults.headers['User-Agent'] = axios.defaults.headers.common['User-Agent'];
+            }
+        } catch(e) {
+            console.warn("Failed to patch ClobClient internals");
         }
     }
 
@@ -232,7 +239,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
         if (!apiCreds || !apiCreds.key) {
             this.logger.info('🤝 Performing L2 Handshake...');
             
-            // Standard client for handshake
             const tempClient = new ClobClient(
                 HOST_URL,
                 Chain.POLYGON,
@@ -241,6 +247,8 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 SignatureType.EOA,
                 this.funderAddress
             );
+            
+            this.patchClient(tempClient);
 
             try {
                 const rawCreds = await tempClient.createOrDeriveApiKey();
@@ -268,7 +276,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
              this.logger.info('🔌 Connecting to CLOB...');
         }
         
-        this.apiCreds = apiCreds; // Store for fallback
+        this.apiCreds = apiCreds; 
 
         let builderConfig: BuilderConfig | undefined;
         if (this.config.builderApiKey) {
@@ -292,6 +300,8 @@ export class PolymarketAdapter implements IExchangeAdapter {
             undefined,
             builderConfig
         );
+        
+        this.patchClient(this.client);
         
         await this.ensureAllowance();
     }
@@ -359,7 +369,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
     async fetchPublicTrades(address: string, limit: number = 20): Promise<TradeSignal[]> {
         try {
             const url = `https://data-api.polymarket.com/activity?user=${address}&limit=${limit}`;
-            // Proxy settings are globally applied to axios, so this call uses them automatically
+            // Uses global axios with proxy/cookies
             const res = await axios.get<PolyActivityResponse[]>(url);
             
             if (!res.data || !Array.isArray(res.data)) return [];
@@ -387,7 +397,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
         }
     }
     
-    // Manual L2 Header Generation
     private signL2Request(method: string, path: string, body: any): any {
         if (!this.apiCreds) throw new Error("No API Credentials for manual signing");
         
@@ -464,22 +473,22 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 let response: any;
                 
                 try {
-                    // 2. Try Standard SDK Post
+                    // 2. Try Standard SDK Post (Now patched to use cookies/proxy)
                     response = await this.client.postOrder(signedOrder, OrderType.FOK);
                 } catch(postError: any) {
-                    // 3. Fallback: Manual HTTP POST if SDK fails (e.g. 403 Forbidden)
+                    // 3. Fallback: Manual HTTP POST
                     if ((postError.message.includes("403") || postError.message.includes("Forbidden")) && this.apiCreds) {
-                        this.logger.warn("⚠️ SDK 403 Forbidden. Attempting Manual Fallback...");
+                        this.logger.warn("⚠️ SDK 403 Forbidden. Attempting Manual Fallback with Cookies...");
                         
                         const body = {
                             order: signedOrder,
-                            owner: this.apiCreds.key, // Owner is often the API Key in some contexts or Funder addr
+                            owner: this.apiCreds.key, 
                             orderType: OrderType.FOK
                         };
                         
                         const headers = this.signL2Request('POST', '/order', body);
                         
-                        // Use wrapped axios to include cookies
+                        // Use global axios (wrapped with cookie jar)
                         const manualRes = await axios.post(`${HOST_URL}/order`, body, { headers });
                         response = manualRes.data;
                         this.logger.success("✅ Manual Fallback Succeeded.");
