@@ -136,6 +136,8 @@ export class PolymarketAdapter implements IExchangeAdapter {
     private applyProxySettings() {
         const proxyUrl = this.config.proxyUrl || FALLBACK_PROXY;
         
+        // Remove the incompatible wrapper(axios) call
+        
         // Browser Emulation Headers
         const STEALTH_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
         
@@ -147,10 +149,12 @@ export class PolymarketAdapter implements IExchangeAdapter {
         
         if (proxyUrl && proxyUrl.startsWith('http')) {
             try {
+                // Use HttpsProxyAgent for better compatibility with node-fetch/axios
                 this.httpsAgent = new HttpsProxyAgent(proxyUrl);
                 
                 // Set global axios defaults
                 axios.defaults.httpsAgent = this.httpsAgent;
+                // Also set proxy config for axios (some versions prefer this)
                 const url = new URL(proxyUrl);
                 axios.defaults.proxy = {
                     protocol: url.protocol.replace(':', ''),
@@ -387,6 +391,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
         // MANUAL AXIOS FALLBACK for Orderbook to avoid UA leak in SDK
         // The SDK's getOrderBook might be simple enough to replicate
         try {
+             // Explicitly use the global axios which has the cookie interceptors attached
              const res = await axios.get(`${HOST_URL}/book`, { 
                  params: { token_id: tokenId } 
              });
