@@ -66,6 +66,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
     private zdService?: ZeroDevService;
     private usdcContract?: Contract;
     private cookieJar: CookieJar;
+    private dataApiAxios: ReturnType<typeof axios.create>; // Separate instance for data API calls
     
     // Stored credentials for manual fallback
     private apiCreds?: { key: string; secret: string; passphrase: string };
@@ -86,6 +87,14 @@ export class PolymarketAdapter implements IExchangeAdapter {
         private logger: Logger
     ) {
         this.cookieJar = new CookieJar();
+        // Create separate axios instance for data API (no browser headers)
+        this.dataApiAxios = axios.create({
+            timeout: 10000,
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            }
+        });
     }
 
     async initialize(): Promise<void> {
@@ -260,10 +269,17 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 // Override proxy settings
                 instance.defaults.proxy = axios.defaults.proxy;
                 
-                // Override all browser headers - type-safe iteration
-                (Object.keys(browserHeaders) as Array<keyof typeof browserHeaders>).forEach(key => {
-                    instance.defaults.headers.common[key] = browserHeaders[key];
-                });
+                // Only apply browser headers to CLOB client instances
+                // Check if this instance is likely used for CLOB by checking its base URL or context
+                const isClobInstance = instance.defaults?.baseURL?.includes('clob.polymarket.com') ||
+                                     instance.defaults?.headers?.common?.['POLY_API_KEY'] ||
+                                     instance.defaults?.headers?.common?.['POLY_SIGNATURE'];
+                
+                if (isClobInstance) {
+                    (Object.keys(browserHeaders) as Array<keyof typeof browserHeaders>).forEach(key => {
+                        instance.defaults.headers.common[key] = browserHeaders[key];
+                    });
+                }
                 
                 // Ensure interceptors are applied for cookie handling
                 if (!instance.interceptors) {
@@ -468,8 +484,8 @@ export class PolymarketAdapter implements IExchangeAdapter {
     async fetchPublicTrades(address: string, limit: number = 20): Promise<TradeSignal[]> {
         try {
             const url = `https://data-api.polymarket.com/activity?user=${address}&limit=${limit}`;
-            // Uses global axios with proxy/cookies
-            const res = await axios.get<PolyActivityResponse[]>(url);
+            // Use separate axios instance for data API (no browser headers)
+            const res = await this.dataApiAxios.get<PolyActivityResponse[]>(url);
             
             if (!res.data || !Array.isArray(res.data)) return [];
 
