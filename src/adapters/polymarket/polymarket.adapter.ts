@@ -12,7 +12,7 @@ import { User } from '../../database/index.js';
 import { BuilderConfig } from '@polymarket/builder-signing-sdk';
 import { Logger } from '../../utils/logger.util.js';
 import axios, { AxiosInstance } from 'axios';
-import { wrapper } from 'axios-cookiejar-support';
+// Removed conflicting wrapper import
 import { CookieJar } from 'tough-cookie';
 import * as crypto from 'crypto'; 
 import { HttpsProxyAgent } from 'https-proxy-agent';
@@ -136,8 +136,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
     private applyProxySettings() {
         const proxyUrl = this.config.proxyUrl || FALLBACK_PROXY;
         
-        // Wrap axios globally to support cookies
-        wrapper(axios);
+        // Remove the incompatible wrapper(axios) call
         
         // Browser Emulation Headers
         const STEALTH_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -173,11 +172,58 @@ export class PolymarketAdapter implements IExchangeAdapter {
             }
         }
         
-        // Enable Cookie Jar
-        // @ts-ignore
-        axios.defaults.jar = this.cookieJar;
-        // @ts-ignore
-        axios.defaults.withCredentials = true;
+        // --- MANUAL COOKIE MANAGEMENT INTERCEPTORS ---
+        
+        // 1. Request Interceptor: Inject Cookie Header
+        axios.interceptors.request.use(async (config) => {
+            if (config.url) {
+                // Force headers again just in case SDK overrode them
+                if (config.url.includes('polymarket.com')) {
+                    config.headers['User-Agent'] = STEALTH_UA;
+                    config.headers['Origin'] = 'https://polymarket.com';
+                    config.headers['Referer'] = 'https://polymarket.com/';
+                    
+                    // Manually get cookies from jar and set header
+                    try {
+                        const cookieString = await this.cookieJar.getCookieString(config.url);
+                        if (cookieString) {
+                            config.headers['Cookie'] = cookieString;
+                        }
+                    } catch(e) { /* ignore cookie read error */ }
+                }
+            }
+            return config;
+        });
+
+        // 2. Response Interceptor: Save Set-Cookie Header
+        axios.interceptors.response.use(async (response) => {
+            if (response.headers['set-cookie']) {
+                const cookies = response.headers['set-cookie'];
+                const url = response.config.url;
+                if (url && Array.isArray(cookies)) {
+                    for (const cookie of cookies) {
+                         try {
+                             await this.cookieJar.setCookie(cookie, url);
+                         } catch(e) {}
+                    }
+                }
+            }
+            return response;
+        }, async (error) => {
+            // Also capture cookies on error responses (like 403 Forbidden which often sets the __cf_bm cookie)
+            if (error.response && error.response.headers && error.response.headers['set-cookie']) {
+                const cookies = error.response.headers['set-cookie'];
+                const url = error.config?.url;
+                 if (url && Array.isArray(cookies)) {
+                    for (const cookie of cookies) {
+                         try {
+                             await this.cookieJar.setCookie(cookie, url);
+                         } catch(e) {}
+                    }
+                }
+            }
+            return Promise.reject(error);
+        });
     }
 
     // Visits the homepage to acquire Cloudflare cookies
@@ -201,7 +247,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
              if (e instanceof Error && e.message.includes('403')) {
                   this.logger.info("✅ Cookies captured (from 403 challenge).");
              } else {
-                  this.logger.warn("Cookie warm-up error: " + (e as Error).message);
+                  this.logger.warn("Cookie warm-up response: " + (e as Error).message);
              }
         }
     }
@@ -211,16 +257,13 @@ export class PolymarketAdapter implements IExchangeAdapter {
         try {
             // 1. Patch Axios Instance if it exists
             if (client.axiosInstance) {
-                 client.axiosInstance.defaults.jar = this.cookieJar;
-                 client.axiosInstance.defaults.withCredentials = true;
+                 // We don't set .jar property directly anymore, our interceptors handle it
                  client.axiosInstance.defaults.httpsAgent = this.httpsAgent;
                  client.axiosInstance.defaults.proxy = axios.defaults.proxy;
                  client.axiosInstance.defaults.headers['User-Agent'] = axios.defaults.headers.common['User-Agent'];
             }
             // 2. Patch internal httpClient if it exists
             if (client.httpClient) {
-                 client.httpClient.defaults.jar = this.cookieJar;
-                 client.httpClient.defaults.withCredentials = true;
                  client.httpClient.defaults.httpsAgent = this.httpsAgent;
                  client.httpClient.defaults.proxy = axios.defaults.proxy;
                  client.httpClient.defaults.headers['User-Agent'] = axios.defaults.headers.common['User-Agent'];
@@ -488,7 +531,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
                         
                         const headers = this.signL2Request('POST', '/order', body);
                         
-                        // Use global axios (wrapped with cookie jar)
+                        // Use global axios (patched with interceptors for cookies)
                         const manualRes = await axios.post(`${HOST_URL}/order`, body, { headers });
                         response = manualRes.data;
                         this.logger.success("✅ Manual Fallback Succeeded.");
