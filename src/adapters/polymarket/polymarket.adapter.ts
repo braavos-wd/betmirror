@@ -12,15 +12,11 @@ import { User } from '../../database/index.js';
 import { BuilderConfig } from '@polymarket/builder-signing-sdk';
 import { Logger } from '../../utils/logger.util.js';
 import axios from 'axios';
-import { CookieJar } from 'tough-cookie';
-import { promisify } from 'util';
-import * as crypto from 'crypto'; 
 
 // --- CONSTANTS ---
 const USDC_BRIDGED_POLYGON = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
 const POLYMARKET_EXCHANGE = '0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E';
 const HOST_URL = 'https://clob.polymarket.com';
-const FALLBACK_PROXY = 'http://toagonef-rotate:1t19is7izars@p.webshare.io:80';
 
 const USDC_ABI = [
   'function allowance(address owner, address spender) view returns (uint256)',
@@ -29,6 +25,7 @@ const USDC_ABI = [
   'function transfer(address to, uint256 amount) returns (bool)'
 ];
 
+// Adapter to make Ethers v6 Wallet compatible with ClobClient requirements
 class EthersV6Adapter extends Wallet {
     async _signTypedData(domain: any, types: any, value: any): Promise<string> {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -65,12 +62,7 @@ export class PolymarketAdapter implements IExchangeAdapter {
     private funderAddress?: string | undefined; 
     private zdService?: ZeroDevService;
     private usdcContract?: Contract;
-    private cookieJar: CookieJar;
-    private dataApiAxios: ReturnType<typeof axios.create>; // Separate instance for data API calls
     
-    // Stored credentials for manual fallback
-    private apiCreds?: { key: string; secret: string; passphrase: string };
-
     constructor(
         private config: {
             rpcUrl: string;
@@ -82,23 +74,12 @@ export class PolymarketAdapter implements IExchangeAdapter {
             builderApiKey?: string;
             builderApiSecret?: string;
             builderApiPassphrase?: string;
-            proxyUrl?: string; 
         },
         private logger: Logger
-    ) {
-        this.cookieJar = new CookieJar();
-        // Create separate axios instance for data API (no browser headers)
-        this.dataApiAxios = axios.create({
-            timeout: 10000,
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
-        });
-    }
+    ) {}
 
     async initialize(): Promise<void> {
-        this.logger.info(`[${this.exchangeName}] Initializing Adapter...`);
+        this.logger.info(`[${this.exchangeName}] Initializing Adapter (Pure SDK Mode)...`);
         const provider = new JsonRpcProvider(this.config.rpcUrl);
         
         if (this.config.walletConfig.type === 'SMART_ACCOUNT') {
@@ -139,200 +120,14 @@ export class PolymarketAdapter implements IExchangeAdapter {
         }
         return true;
     }
-    
-    private applyProxySettings() {
-        const proxyUrl = this.config.proxyUrl || FALLBACK_PROXY;
-        
-        // Browser Emulation Headers (only for CLOB requests via interceptors)
-        const STEALTH_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-        
-        if (proxyUrl && proxyUrl.startsWith('http')) {
-            try {
-                const url = new URL(proxyUrl);
-                // Native Axios Proxy Configuration
-                axios.defaults.proxy = {
-                    protocol: url.protocol.replace(':', ''),
-                    host: url.hostname,
-                    port: parseInt(url.port) || 80,
-                    auth: (url.username && url.password) ? {
-                        username: url.username,
-                        password: url.password
-                    } : undefined
-                };
-                
-                this.logger.info(`🛡️ Proxy Configured: ${url.hostname}`);
-            } catch (e) {
-                this.logger.warn(`Invalid Proxy URL: ${proxyUrl}`);
-            }
-        }
-        
-        // --- MANUAL COOKIE INTERCEPTORS ---
-        // Manually bridge tough-cookie to axios headers to avoid conflicts
-        
-        // Request: Inject Cookie Header and Browser Headers (CLOB only)
-        axios.interceptors.request.use(async (config) => {
-            if (config.url && config.url.includes('clob.polymarket.com')) {
-                // Apply full browser headers for CLOB requests
-                config.headers['User-Agent'] = STEALTH_UA;
-                config.headers['Accept'] = 'application/json, text/plain, */*';
-                config.headers['Accept-Language'] = 'en-US,en;q=0.9';
-                config.headers['Accept-Encoding'] = 'gzip, deflate, br';
-                config.headers['Connection'] = 'keep-alive';
-                config.headers['Origin'] = 'https://polymarket.com';
-                config.headers['Referer'] = 'https://polymarket.com/';
-                config.headers['sec-ch-ua'] = '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"';
-                config.headers['sec-ch-ua-mobile'] = '?0';
-                config.headers['sec-ch-ua-platform'] = '"Windows"';
-                config.headers['sec-fetch-dest'] = 'empty';
-                config.headers['sec-fetch-mode'] = 'cors';
-                config.headers['sec-fetch-site'] = 'same-site';
-                
-                try {
-                    // Promisify getCookieString
-                    const getCookieString = promisify(this.cookieJar.getCookieString).bind(this.cookieJar);
-                    const cookieString = await getCookieString(config.url);
-                    if (cookieString) {
-                        config.headers['Cookie'] = cookieString;
-                    }
-                } catch(e) { /* ignore */ }
-            }
-            // For data-api.polymarket.com, use minimal headers (let axios defaults handle it)
-            return config;
-        });
-
-        // Response: Capture Set-Cookie Header
-        const captureCookies = async (headers: any, url?: string) => {
-             if (headers && headers['set-cookie'] && url) {
-                const cookies = headers['set-cookie'];
-                if (Array.isArray(cookies)) {
-                    const setCookie = promisify(this.cookieJar.setCookie).bind(this.cookieJar);
-                    for (const cookie of cookies) {
-                         try { await setCookie(cookie, url); } catch(e) {}
-                    }
-                }
-            }
-        };
-
-        axios.interceptors.response.use(async (response) => {
-            await captureCookies(response.headers, response.config.url);
-            return response;
-        }, async (error) => {
-            if (error.response) {
-                await captureCookies(error.response.headers, error.config?.url);
-            }
-            return Promise.reject(error);
-        });
-    }
-
-    private async warmUpCookies() {
-        try {
-            this.logger.info("🍪 Warming up cookies via Proxy...");
-            await axios.get('https://polymarket.com/', {
-                headers: {
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                    'Upgrade-Insecure-Requests': '1',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'none'
-                }
-            });
-            this.logger.info("✅ Cookies secured.");
-        } catch (e) {
-             if (e instanceof Error && e.message.includes('403')) {
-                  this.logger.info("✅ Cookies captured (from 403 challenge).");
-             } else {
-                  this.logger.warn("Cookie warm-up response: " + (e as Error).message);
-             }
-        }
-    }
-    
-    private patchClient(client: any) {
-        const STEALTH_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-        const browserHeaders: Record<string, string> = {
-            'User-Agent': STEALTH_UA,
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Origin': 'https://polymarket.com',
-            'Referer': 'https://polymarket.com/',
-            'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'same-site'
-        };
-
-        const patchAxiosInstance = (instance: any) => {
-            if (instance && instance.defaults) {
-                // Override proxy settings
-                instance.defaults.proxy = axios.defaults.proxy;
-                
-                // Apply browser headers to all instances in the CLOB client
-                // We're being called from patchClient which is only used for CLOB instances
-                (Object.keys(browserHeaders) as Array<keyof typeof browserHeaders>).forEach(key => {
-                    instance.defaults.headers.common[key] = browserHeaders[key];
-                });
-                
-                // Ensure interceptors are applied for cookie handling
-                if (!instance.interceptors) {
-                    instance.interceptors = {
-                        request: { use: () => {} },
-                        response: { use: () => {} }
-                    };
-                }
-            }
-        };
-
-        // Patch known axios instances
-        if (client.axiosInstance) {
-            patchAxiosInstance(client.axiosInstance);
-        }
-        if (client.httpClient) {
-            patchAxiosInstance(client.httpClient);
-        }
-        if (client.request) {
-            patchAxiosInstance(client.request);
-        }
-        if (client.http) {
-            patchAxiosInstance(client.http);
-        }
-
-        // Deep patch - recursively search for axios instances
-        const deepPatch = (obj: any, depth = 0) => {
-            if (depth > 5) return; // Prevent infinite recursion
-            
-            if (obj && typeof obj === 'object') {
-                Object.keys(obj).forEach(key => {
-                    const value = obj[key];
-                    
-                    // Check if this looks like an axios instance
-                    if (value && typeof value === 'object' && 
-                        (value.defaults || value.get || value.post || value.put || value.delete)) {
-                        patchAxiosInstance(value);
-                    }
-                    
-                    // Recursively search
-                    if (typeof value === 'object' && !Array.isArray(value)) {
-                        deepPatch(value, depth + 1);
-                    }
-                });
-            }
-        };
-        
-        deepPatch(client);
-    }
 
     async authenticate(): Promise<void> {
-        this.applyProxySettings();
-        await this.warmUpCookies();
-
         let apiCreds = this.config.l2ApiCredentials;
 
         if (!apiCreds || !apiCreds.key) {
             this.logger.info('🤝 Performing L2 Handshake...');
             
+            // Handshake Client
             const tempClient = new ClobClient(
                 HOST_URL,
                 Chain.POLYGON,
@@ -341,8 +136,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 SignatureType.EOA,
                 this.funderAddress
             );
-            
-            this.patchClient(tempClient);
 
             try {
                 const rawCreds = await tempClient.createOrDeriveApiKey();
@@ -369,8 +162,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
         } else {
              this.logger.info('🔌 Connecting to CLOB...');
         }
-        
-        this.apiCreds = apiCreds; 
 
         let builderConfig: BuilderConfig | undefined;
         if (this.config.builderApiKey) {
@@ -383,6 +174,9 @@ export class PolymarketAdapter implements IExchangeAdapter {
             });
         }
 
+        // Main Client Initialization
+        // We do NOT use proxies or custom http options.
+        // We rely on the SDK's internal handling as per support instructions.
         this.client = new ClobClient(
             HOST_URL,
             Chain.POLYGON,
@@ -394,8 +188,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
             undefined,
             builderConfig
         );
-        
-        this.patchClient(this.client);
         
         await this.ensureAllowance();
     }
@@ -453,33 +245,18 @@ export class PolymarketAdapter implements IExchangeAdapter {
 
     async getOrderBook(tokenId: string): Promise<OrderBook> {
         if (!this.client) throw new Error("Client not authenticated");
-        
-        // MANUAL AXIOS FALLBACK for Orderbook to avoid UA leak in SDK
-        // The SDK's getOrderBook might be simple enough to replicate
-        try {
-             // Explicitly use the global axios which has the cookie interceptors attached
-             const res = await axios.get(`${HOST_URL}/book`, { 
-                 params: { token_id: tokenId } 
-             });
-             return {
-                 bids: res.data.bids.map((b: any) => ({ price: parseFloat(b.price), size: parseFloat(b.size) })),
-                 asks: res.data.asks.map((a: any) => ({ price: parseFloat(a.price), size: parseFloat(a.size) }))
-             };
-        } catch(e) {
-             // Fallback to SDK if manual fails, though manual is preferred for proxy
-             const book = await this.client.getOrderBook(tokenId);
-             return {
-                bids: book.bids.map(b => ({ price: parseFloat(b.price), size: parseFloat(b.size) })),
-                asks: book.asks.map(a => ({ price: parseFloat(a.price), size: parseFloat(a.size) }))
-             };
-        }
+        // Using standard SDK call
+        const book = await this.client.getOrderBook(tokenId);
+        return {
+            bids: book.bids.map(b => ({ price: parseFloat(b.price), size: parseFloat(b.size) })),
+            asks: book.asks.map(a => ({ price: parseFloat(a.price), size: parseFloat(a.size) }))
+        };
     }
 
     async fetchPublicTrades(address: string, limit: number = 20): Promise<TradeSignal[]> {
         try {
             const url = `https://data-api.polymarket.com/activity?user=${address}&limit=${limit}`;
-            // Use separate axios instance for data API (no browser headers)
-            const res = await this.dataApiAxios.get<PolyActivityResponse[]>(url);
+            const res = await axios.get<PolyActivityResponse[]>(url);
             
             if (!res.data || !Array.isArray(res.data)) return [];
 
@@ -505,39 +282,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
             return [];
         }
     }
-    
-    private signL2Request(method: string, path: string, body: any): any {
-        if (!this.apiCreds) throw new Error("No API Credentials for manual signing");
-        
-        const timestamp = Math.floor(Date.now() / 1000);
-        const sigString = `${timestamp}${method}${path}${JSON.stringify(body)}`;
-        
-        const hmac = crypto.createHmac('sha256', this.apiCreds.secret);
-        const signature = hmac.update(sigString).digest('base64');
-        
-        const STEALTH_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-        
-        return {
-            'POLY_API_KEY': this.apiCreds.key,
-            'POLY_TIMESTAMP': timestamp.toString(),
-            'POLY_SIGNATURE': signature,
-            'POLY_PASSPHRASE': this.apiCreds.passphrase,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'User-Agent': STEALTH_UA,
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Origin': 'https://polymarket.com',
-            'Referer': 'https://polymarket.com/',
-            'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'same-site'
-        };
-    }
 
     async createOrder(params: OrderParams): Promise<string> {
         if (!this.client) throw new Error("Client not authenticated");
@@ -550,81 +294,62 @@ export class PolymarketAdapter implements IExchangeAdapter {
         const maxRetries = 3;
         let lastOrderId = "";
 
+        // Retry Loop for Order Placement
         while (remaining >= 0.50 && retryCount < maxRetries) { 
-            // Use our manual getOrderBook to avoid UA leak
-            const currentOrderBook = await this.getOrderBook(params.tokenId);
-            const currentLevels = isBuy ? currentOrderBook.asks : currentOrderBook.bids;
-
-            if (!currentLevels || currentLevels.length === 0) {
-                 if (retryCount === 0) throw new Error("No liquidity in orderbook");
-                 break; 
-            }
-
-            const level = currentLevels[0];
-            const levelPrice = level.price;
-
-            if (isBuy && params.priceLimit && levelPrice > params.priceLimit) break;
-            if (!isBuy && params.priceLimit && levelPrice < params.priceLimit) break;
-
-            let orderSize: number;
-            let orderValue: number;
-
-            if (isBuy) {
-                const levelValue = level.size * levelPrice;
-                orderValue = Math.min(remaining, levelValue);
-                orderSize = orderValue / levelPrice;
-            } else {
-                const levelValue = level.size * levelPrice;
-                orderValue = Math.min(remaining, levelValue);
-                orderSize = orderValue / levelPrice;
-            }
-
-            orderSize = Math.floor(orderSize * 100) / 100;
-
-            if (orderSize <= 0) break;
-
-            const orderArgs = {
-                side: orderSide,
-                tokenID: params.tokenId,
-                amount: orderSize,
-                price: levelPrice,
-            };
-
             try {
-                // 1. Sign Order using SDK (Local Operation)
-                const signedOrder = await this.client.createMarketOrder(orderArgs);
-                
-                let response: any;
-                
-                try {
-                    // 2. Try Standard SDK Post (Now patched to use cookies/proxy)
-                    response = await this.client.postOrder(signedOrder, OrderType.FOK);
-                } catch(postError: any) {
-                    // 3. Fallback: Manual HTTP POST
-                    if ((postError.message.includes("403") || postError.message.includes("Forbidden") || postError.message.includes("502")) && this.apiCreds) {
-                        this.logger.warn("⚠️ SDK Network Error. Attempting Manual Fallback...");
-                        
-                        const body = {
-                            order: signedOrder,
-                            owner: this.apiCreds.key, 
-                            orderType: OrderType.FOK
-                        };
-                        
-                        const headers = this.signL2Request('POST', '/order', body);
-                        
-                        // Use global axios (patched with interceptors for cookies/proxy)
-                        const manualRes = await axios.post(`${HOST_URL}/order`, body, { headers });
-                        response = manualRes.data;
-                        this.logger.success("✅ Manual Fallback Succeeded.");
-                    } else {
-                        throw postError;
-                    }
+                // 1. Fetch Liquidity using SDK
+                const currentOrderBook = await this.client.getOrderBook(params.tokenId);
+                const currentLevels = isBuy ? currentOrderBook.asks : currentOrderBook.bids;
+
+                if (!currentLevels || currentLevels.length === 0) {
+                     if (retryCount === 0) throw new Error("No liquidity in orderbook");
+                     break; 
                 }
 
-                if (response.success || response.orderID) {
+                // 2. Determine Price/Size
+                const level = currentLevels[0];
+                const levelPrice = parseFloat(level.price);
+
+                if (isBuy && params.priceLimit && levelPrice > params.priceLimit) break;
+                if (!isBuy && params.priceLimit && levelPrice < params.priceLimit) break;
+
+                let orderSize: number;
+                let orderValue: number;
+
+                if (isBuy) {
+                    const levelValue = parseFloat(level.size) * levelPrice;
+                    orderValue = Math.min(remaining, levelValue);
+                    orderSize = orderValue / levelPrice;
+                } else {
+                    const levelValue = parseFloat(level.size) * levelPrice;
+                    orderValue = Math.min(remaining, levelValue);
+                    orderSize = orderValue / levelPrice;
+                }
+
+                orderSize = Math.floor(orderSize * 100) / 100;
+
+                if (orderSize <= 0) break;
+
+                const orderArgs = {
+                    side: orderSide,
+                    tokenID: params.tokenId,
+                    amount: orderSize,
+                    price: levelPrice,
+                    feeRateBps: 0 // Optional: Set if needed, usually 0 for maker
+                };
+
+                // 3. Execute using SDK
+                // createAndPostOrder handles signing and posting in one step
+                // Note: The SDK method signature might vary slightly, but we use the separate steps for better error handling if needed,
+                // or the combined one if preferred. Here we stick to separate for control.
+                
+                const signedOrder = await this.client.createMarketOrder(orderArgs);
+                const response = await this.client.postOrder(signedOrder, OrderType.FOK);
+
+                if (response.success && response.orderID) {
                     remaining -= orderValue;
                     retryCount = 0;
-                    lastOrderId = response.orderID || response.transactionHash;
+                    lastOrderId = response.orderID;
                 } else {
                     const errMsg = response.errorMsg || 'Unknown Relayer Error';
                     this.logger.error(`❌ Exchange Rejection: ${errMsg}`);
@@ -633,7 +358,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
                          this.logger.warn("Triggering emergency allowance check...");
                          await this.ensureAllowance();
                     }
-                    
                     retryCount++;
                 }
             } catch (error: any) {
@@ -641,9 +365,8 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 retryCount++;
             }
             
-            // Random Jitter (2s - 4.5s)
-            const jitter = Math.floor(Math.random() * 2500) + 2000;
-            await new Promise(r => setTimeout(r, jitter));
+            // Minimal jitter for safety
+            await new Promise(r => setTimeout(r, 1000));
         }
         
         return lastOrderId || "failed";
