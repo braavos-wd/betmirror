@@ -1,18 +1,13 @@
-import { Contract, formatUnits, parseUnits } from 'ethers';
-const USDC_ABI = [
-    'function balanceOf(address owner) view returns (uint256)',
-    'function transfer(address to, uint256 amount) returns (bool)',
-];
 export class FundManagerService {
-    constructor(wallet, config, logger, notifier) {
-        this.wallet = wallet;
+    constructor(adapter, funderAddress, config, logger, notifier) {
+        this.adapter = adapter;
+        this.funderAddress = funderAddress;
         this.config = config;
         this.logger = logger;
         this.notifier = notifier;
         // OPTIMIZATION: Throttle balance checks to avoid RPC Limits
         this.lastCheckTime = 0;
         this.THROTTLE_MS = 60 * 60 * 1000; // Check max once per hour unless forced
-        this.usdcContract = new Contract(config.usdcContractAddress, USDC_ABI, wallet);
     }
     async checkAndSweepProfits(force = false) {
         if (!this.config.enabled || !this.config.destinationAddress || !this.config.maxRetentionAmount) {
@@ -25,8 +20,8 @@ export class FundManagerService {
         }
         this.lastCheckTime = Date.now();
         try {
-            const balanceBigInt = await this.usdcContract.balanceOf(this.wallet.address);
-            const balance = parseFloat(formatUnits(balanceBigInt, 6));
+            // Use Adapter to fetch balance
+            const balance = await this.adapter.fetchBalance(this.funderAddress);
             this.logger.info(`🏦 Vault Check: Proxy Balance $${balance.toFixed(2)} (Cap: $${this.config.maxRetentionAmount})`);
             if (balance > this.config.maxRetentionAmount) {
                 const sweepAmount = balance - this.config.maxRetentionAmount;
@@ -34,16 +29,14 @@ export class FundManagerService {
                 if (sweepAmount < 10)
                     return null;
                 this.logger.info(`💸 Sweeping excess funds: $${sweepAmount.toFixed(2)} -> ${this.config.destinationAddress}`);
-                const amountInUnits = parseUnits(sweepAmount.toFixed(6), 6);
-                const tx = await this.usdcContract.transfer(this.config.destinationAddress, amountInUnits);
-                this.logger.info(`⏳ Cashout Tx Sent: ${tx.hash}`);
-                await tx.wait();
-                this.logger.info(`✅ Cashout Confirmed!`);
-                await this.notifier.sendCashoutAlert(sweepAmount, tx.hash);
+                // Use Adapter to execute cashout
+                const txHash = await this.adapter.cashout(sweepAmount, this.config.destinationAddress);
+                this.logger.info(`✅ Cashout Tx: ${txHash}`);
+                await this.notifier.sendCashoutAlert(sweepAmount, txHash);
                 return {
-                    id: tx.hash,
+                    id: txHash,
                     amount: sweepAmount,
-                    txHash: tx.hash,
+                    txHash: txHash,
                     destination: this.config.destinationAddress,
                     timestamp: new Date().toISOString()
                 };

@@ -486,7 +486,8 @@ async function restoreBots() {
 connectDB(ENV.mongoUri).then(async () => {
     // await seedOfficialWallets(); // Optional
     registryAnalytics.updateAllRegistryStats();
-    app.listen(PORT, () => {
+    // Explicitly bind to 0.0.0.0 to fix Fly.io listener issue
+    app.listen(Number(PORT), '0.0.0.0', () => {
         console.log(`🌍 Bet Mirror Cloud Server running on port ${PORT}`);
         restoreBots();
     });

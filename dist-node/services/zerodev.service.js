@@ -1,69 +1,79 @@
-import { createKernelAccount, createZeroDevPaymasterClient, createKernelAccountClient, } from "@zerodev/sdk";
+import { createKernelAccount, createKernelAccountClient, } from "@zerodev/sdk";
 import { signerToEcdsaValidator } from "@zerodev/ecdsa-validator";
-import { http, createPublicClient, encodeFunctionData, parseAbi } from "viem";
+import { http, createPublicClient, encodeFunctionData, parseAbi, decodeEventLog, } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { polygon } from "viem/chains";
 import { toECDSASigner } from "@zerodev/permissions/signers";
 import { deserializePermissionAccount, serializePermissionAccount, toPermissionValidator, } from "@zerodev/permissions";
 import { toSudoPolicy } from "@zerodev/permissions/policies";
-import { getEntryPoint, KERNEL_V3_1 } from "@zerodev/sdk/constants";
+import { KERNEL_V3_1, getEntryPoint } from "@zerodev/sdk/constants";
 // Constants
 const ENTRY_POINT = getEntryPoint("0.7");
 const KERNEL_VERSION = KERNEL_V3_1;
 const CHAIN = polygon;
-// Default Public RPC (Polygon)
 const PUBLIC_RPC = "https://polygon-rpc.com";
-// --- GAS TOKEN CONFIGURATION ---
-// User requested Native USDC for gas sponsoring.
-// Native USDC: 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359 (Circle)
-// Bridged USDC.e: 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174 (Polymarket)
-const GAS_TOKEN_ADDRESS = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
-// ERC20 Paymaster Address (Pimlico/ZeroDev Standard for Polygon)
-const ERC20_PAYMASTER_ADDRESS = '0x0000000000325602a77414A841499c5613416D2d';
 const USDC_ABI = parseAbi([
     "function transfer(address to, uint256 amount) returns (bool)",
     "function approve(address spender, uint256 amount) returns (bool)"
 ]);
+const ENTRY_POINT_ABI = parseAbi([
+    "event UserOperationEvent(bytes32 indexed userOpHash, address indexed sender, address indexed paymaster, uint256 nonce, bool success, uint256 actualGasCost, uint256 actualGasUsed)"
+]);
 export class ZeroDevService {
     constructor(zeroDevRpcUrlOrId, paymasterRpcUrl) {
-        // 1. Bundler RPC (Standard)
         this.bundlerRpc = this.normalizeRpcUrl(zeroDevRpcUrlOrId);
-        // 2. Paymaster RPC (Strict)
-        // If a specific Paymaster URL is provided, use it EXACTLY as is, preserving params like ?selfFunded=true
-        if (paymasterRpcUrl) {
-            this.paymasterRpc = paymasterRpcUrl;
-        }
-        else {
-            // Fallback to bundler URL if not specified
-            this.paymasterRpc = this.bundlerRpc;
-        }
         console.log(`[ZeroDev] Bundler: ${this.bundlerRpc}`);
-        console.log(`[ZeroDev] Paymaster: ${this.paymasterRpc}`);
+        console.log(`[ZeroDev] Mode: NATIVE GAS ONLY (Paymaster Disabled for Stability)`);
         this.publicClient = createPublicClient({
             chain: CHAIN,
             transport: http(PUBLIC_RPC),
         });
     }
     normalizeRpcUrl(input) {
-        // Simple UUID check
         const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
         const match = input.match(uuidRegex);
-        // If it looks like a full URL, keep it
         if (input.includes("http"))
             return input;
-        // If it's just a project ID, construct the standard Bundler URL
         if (match) {
             return `https://rpc.zerodev.app/api/v3/${match[0]}/chain/137`;
         }
         return input;
     }
-    /**
-     * Universal UserOp Sender with Fallback Logic.
-     * Auto-parses ABI if string array is provided.
-     */
+    async checkUserOpReceipt(receipt) {
+        if (!receipt)
+            throw new Error("No receipt returned");
+        if (typeof receipt.success === 'boolean' && !receipt.success) {
+            throw new Error(`UserOp failed (success=false). Gas Used: ${receipt.actualGasUsed}`);
+        }
+        const entryPointAddr = ENTRY_POINT;
+        if (receipt.logs) {
+            for (const log of receipt.logs) {
+                try {
+                    if (log.address.toLowerCase() === entryPointAddr.toLowerCase()) {
+                        const decoded = decodeEventLog({
+                            abi: ENTRY_POINT_ABI,
+                            data: log.data,
+                            topics: log.topics
+                        });
+                        if (decoded.eventName === 'UserOperationEvent') {
+                            if (!decoded.args.success) {
+                                throw new Error(`UserOp REVERTED on-chain. Nonce: ${decoded.args.nonce}`);
+                            }
+                            return true;
+                        }
+                    }
+                }
+                catch (e) {
+                    continue;
+                }
+            }
+        }
+        return true;
+    }
+    // --- BOT TRANSACTION (Session Key) ---
     async sendTransaction(serializedSessionKey, to, abi, functionName, args) {
+        // 1. Restore Account
         const sessionKeyAccount = await deserializePermissionAccount(this.publicClient, ENTRY_POINT, KERNEL_VERSION, serializedSessionKey);
-        // FIX: Automatically parse Human Readable ABI (String Array) if detected
         const parsedAbi = (abi.length > 0 && typeof abi[0] === 'string')
             ? parseAbi(abi)
             : abi;
@@ -72,61 +82,36 @@ export class ZeroDevService {
             functionName,
             args
         });
+        // 2. Encode Call
         const userOpCallData = await sessionKeyAccount.encodeCalls([{
                 to: to,
                 value: BigInt(0),
                 data: callData
             }]);
-        const paymasterClient = createZeroDevPaymasterClient({
-            chain: CHAIN,
-            transport: http(this.paymasterRpc),
-        });
+        // 3. Create Client (Native Gas - No Paymaster)
         const kernelClient = createKernelAccountClient({
             account: sessionKeyAccount,
             chain: CHAIN,
             bundlerTransport: http(this.bundlerRpc),
             client: this.publicClient,
-            paymaster: {
-                getPaymasterData(userOperation) {
-                    return paymasterClient.sponsorUserOperation({
-                        userOperation,
-                        gasToken: GAS_TOKEN_ADDRESS
-                    });
-                }
-            }
         });
-        // 1. Try with Paymaster (USDC Gas)
         try {
-            console.log(`Attempting UserOp via ERC20 Paymaster...`);
+            console.log(`🚀 Sending Native Gas UserOp (Bot Trade)...`);
             const userOpHash = await kernelClient.sendUserOperation({
                 callData: userOpCallData
             });
-            console.log("✅ Paymaster Success. UserOp:", userOpHash);
-            return userOpHash;
+            console.log(`UserOp Submitted: ${userOpHash}`);
+            const receipt = await kernelClient.waitForUserOperationReceipt({ hash: userOpHash });
+            await this.checkUserOpReceipt(receipt);
+            console.log("✅ Success. Tx:", receipt.receipt.transactionHash);
+            return receipt.receipt.transactionHash;
         }
-        catch (e) {
-            console.warn(`⚠️ Paymaster Failed (${e.message}). Retrying with Native Gas (POL)...`);
+        catch (error) {
+            console.error("❌ Transaction Failed:", error.message);
+            throw error;
         }
-        // 2. Fallback: Native Gas (POL)
-        const fallbackClient = createKernelAccountClient({
-            account: sessionKeyAccount,
-            chain: CHAIN,
-            bundlerTransport: http(this.bundlerRpc),
-            client: this.publicClient,
-        });
-        const userOpHash = await fallbackClient.sendUserOperation({
-            callData: userOpCallData
-        });
-        console.log("✅ Native Gas Success. UserOp:", userOpHash);
-        return userOpHash;
     }
-    async getPaymasterApprovalCallData() {
-        return encodeFunctionData({
-            abi: USDC_ABI,
-            functionName: "approve",
-            args: [ERC20_PAYMASTER_ADDRESS, BigInt("115792089237316195423570985008687907853269984665640564039457584007913129639935")]
-        });
-    }
+    // --- USER ONBOARDING (Owner Key) ---
     async computeMasterAccountAddress(ownerWalletClient) {
         try {
             if (!ownerWalletClient)
@@ -144,7 +129,7 @@ export class ZeroDevService {
             return account.address;
         }
         catch (e) {
-            console.error("Failed to compute deterministic address (ZeroDev):", e.message);
+            console.error("Failed to compute deterministic address:", e.message);
             return null;
         }
     }
@@ -153,6 +138,7 @@ export class ZeroDevService {
         const sessionPrivateKey = generatePrivateKey();
         const sessionKeyAccount = privateKeyToAccount(sessionPrivateKey);
         const sessionKeySigner = await toECDSASigner({ signer: sessionKeyAccount });
+        // Create Validator with Owner Signer (Metamask)
         const ecdsaValidator = await signerToEcdsaValidator(this.publicClient, {
             entryPoint: ENTRY_POINT,
             signer: ownerWalletClient,
@@ -161,7 +147,7 @@ export class ZeroDevService {
         const permissionPlugin = await toPermissionValidator(this.publicClient, {
             entryPoint: ENTRY_POINT,
             signer: sessionKeySigner,
-            policies: [toSudoPolicy({})],
+            policies: [toSudoPolicy({})], // Full permission for now (simpler for trading)
             kernelVersion: KERNEL_VERSION,
         });
         const sessionKeyAccountObj = await createKernelAccount(this.publicClient, {
@@ -179,33 +165,10 @@ export class ZeroDevService {
             sessionPrivateKey: sessionPrivateKey
         };
     }
-    async createBotClient(serializedSessionKey) {
-        const sessionKeyAccount = await deserializePermissionAccount(this.publicClient, ENTRY_POINT, KERNEL_VERSION, serializedSessionKey);
-        const paymasterClient = createZeroDevPaymasterClient({
-            chain: CHAIN,
-            transport: http(this.paymasterRpc),
-        });
-        const kernelClient = createKernelAccountClient({
-            account: sessionKeyAccount,
-            chain: CHAIN,
-            bundlerTransport: http(this.bundlerRpc),
-            client: this.publicClient,
-            paymaster: {
-                getPaymasterData(userOperation) {
-                    return paymasterClient.sponsorUserOperation({
-                        userOperation,
-                        gasToken: GAS_TOKEN_ADDRESS
-                    });
-                },
-            },
-        });
-        return {
-            address: sessionKeyAccount.address,
-            client: kernelClient
-        };
-    }
+    // --- MANUAL WITHDRAWAL (Owner Key) ---
+    // Updated to use Native Gas to avoid Paymaster failures
     async withdrawFunds(ownerWalletClient, smartAccountAddress, toAddress, amount, tokenAddress) {
-        console.log("Initiating Trustless Withdrawal...");
+        console.log("Initiating Trustless Withdrawal (Native Gas)...");
         const ecdsaValidator = await signerToEcdsaValidator(this.publicClient, {
             entryPoint: ENTRY_POINT,
             signer: ownerWalletClient,
@@ -219,12 +182,8 @@ export class ZeroDevService {
         });
         const isNative = tokenAddress === '0x0000000000000000000000000000000000000000';
         let callData;
-        let value = BigInt(0);
-        let target;
         if (isNative) {
             callData = "0x";
-            value = amount;
-            target = toAddress;
         }
         else {
             callData = encodeFunctionData({
@@ -232,55 +191,30 @@ export class ZeroDevService {
                 functionName: "transfer",
                 args: [toAddress, amount]
             });
-            target = tokenAddress;
         }
-        const calls = [{ to: target, value, data: callData }];
-        // Auto-approve Paymaster if needed
-        if (!isNative && tokenAddress.toLowerCase() === GAS_TOKEN_ADDRESS.toLowerCase()) {
-            const approveData = await this.getPaymasterApprovalCallData();
-            calls.unshift({
-                to: GAS_TOKEN_ADDRESS,
-                value: BigInt(0),
-                data: approveData
-            });
-        }
+        const calls = [{
+                to: (isNative ? toAddress : tokenAddress),
+                value: isNative ? amount : BigInt(0),
+                data: callData
+            }];
         const encodedCallData = await account.encodeCalls(calls);
-        const paymasterClient = createZeroDevPaymasterClient({
-            chain: CHAIN,
-            transport: http(this.paymasterRpc),
-        });
+        // Use Client WITHOUT Paymaster
         const kernelClient = createKernelAccountClient({
             account,
             chain: CHAIN,
             bundlerTransport: http(this.bundlerRpc),
             client: this.publicClient,
-            paymaster: {
-                getPaymasterData(userOperation) {
-                    return paymasterClient.sponsorUserOperation({
-                        userOperation,
-                        gasToken: GAS_TOKEN_ADDRESS
-                    });
-                }
-            }
         });
         try {
-            const userOpHash = await kernelClient.sendUserOperation({
-                callData: encodedCallData,
-            });
-            const receipt = await this.publicClient.waitForTransactionReceipt({ hash: userOpHash });
-            return receipt.transactionHash;
+            const userOpHash = await kernelClient.sendUserOperation({ callData: encodedCallData });
+            console.log(`Withdrawal UserOp: ${userOpHash}`);
+            const receipt = await kernelClient.waitForUserOperationReceipt({ hash: userOpHash });
+            await this.checkUserOpReceipt(receipt);
+            return receipt.receipt.transactionHash;
         }
         catch (e) {
-            console.warn(`Withdraw Paymaster Failed, trying native gas: ${e.message}`);
-            const fallbackClient = createKernelAccountClient({
-                account,
-                chain: CHAIN,
-                bundlerTransport: http(this.bundlerRpc),
-                client: this.publicClient,
-            });
-            const userOpHash = await fallbackClient.sendUserOperation({ callData: encodedCallData });
-            const receipt = await this.publicClient.waitForTransactionReceipt({ hash: userOpHash });
-            return receipt.transactionHash;
+            console.error(`Withdrawal Failed: ${e.message}`);
+            throw e;
         }
     }
 }

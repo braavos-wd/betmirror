@@ -19,9 +19,25 @@ const USDC_BRIDGED_POLYGON = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
 const POLYMARKET_EXCHANGE = '0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E';
 const HOST_URL = 'https://clob.polymarket.com';
 
-// DEDICATED STATIC RESIDENTIAL PROXY (WebShare)
-// Format: http://user:pass@ip:port
+// DEDICATED STATIC RESIDENTIAL PROXY
 const PROXY_URL = 'http://toagonef:1t19is7izars@142.111.48.253:7030';
+
+// Browser Fingerprint
+const BROWSER_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Sec-Ch-Ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+    'Sec-Ch-Ua-Mobile': '?0',
+    'Sec-Ch-Ua-Platform': '"Windows"',
+    'Sec-Fetch-Dest': 'empty',
+    'Sec-Fetch-Mode': 'cors',
+    'Sec-Fetch-Site': 'same-site',
+    'Referer': 'https://polymarket.com/',
+    'Origin': 'https://polymarket.com',
+    'Connection': 'keep-alive'
+};
 
 const USDC_ABI = [
   'function allowance(address owner, address spender) view returns (uint256)',
@@ -35,6 +51,7 @@ class EthersV6Adapter extends Wallet {
     async _signTypedData(domain: any, types: any, value: any): Promise<string> {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { EIP712Domain, ...cleanTypes } = types;
+        // Ensure chainId is number for EIP-712 domain matching
         if (domain.chainId) domain.chainId = Number(domain.chainId);
         return this.signTypedData(domain, cleanTypes, value);
     }
@@ -126,27 +143,29 @@ export class PolymarketAdapter implements IExchangeAdapter {
         return true;
     }
 
-    private base64UrlToBase64(base64Url: string): string {
-        return base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    }
-    
-    // Inject Dedicated Proxy Agent into Client
+    // Inject Dedicated Proxy Agent + Browser Headers into Client
     private applyProxy(client: ClobClient) {
         try {
             const agent = new HttpsProxyAgent(PROXY_URL);
             
-            // Try to patch known internal axios locations
-            if ((client as any).axiosInstance) {
-                (client as any).axiosInstance.defaults.httpsAgent = agent;
-                (client as any).axiosInstance.defaults.proxy = false; 
-            }
+            const patchInstance = (instance: any) => {
+                if (!instance) return;
+                
+                // 1. Set Proxy Agent
+                instance.defaults.httpsAgent = agent;
+                instance.defaults.proxy = false; 
+                
+                // 2. Overwrite Headers (Critical for Cloudflare)
+                if (!instance.defaults.headers) instance.defaults.headers = {};
+                Object.assign(instance.defaults.headers, BROWSER_HEADERS);
+                Object.assign(instance.defaults.headers.common, BROWSER_HEADERS);
+            };
+
+            // Patch known internal axios locations
+            patchInstance((client as any).axiosInstance);
+            patchInstance((client as any).httpClient);
             
-            if ((client as any).httpClient) {
-                 (client as any).httpClient.defaults.httpsAgent = agent;
-                 (client as any).httpClient.defaults.proxy = false;
-            }
-            
-            this.logger.info("🛡️ Dedicated Proxy Injected");
+            this.logger.info("🛡️ Dedicated Proxy + Stealth Headers Injected");
         } catch (e) {
             this.logger.warn("Failed to inject proxy into SDK");
         }
@@ -206,16 +225,12 @@ export class PolymarketAdapter implements IExchangeAdapter {
             });
         }
         
-        const normalizedCreds = {
-            ...apiCreds,
-            secret: this.base64UrlToBase64(apiCreds.secret)
-        };
-
+        // Use raw creds - SDK v4 handles its own normalization usually
         this.client = new ClobClient(
             HOST_URL,
             Chain.POLYGON,
             this.signerImpl,
-            normalizedCreds,
+            apiCreds,
             SignatureType.EOA,
             this.funderAddress,
             undefined, 
@@ -281,7 +296,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
 
     async getOrderBook(tokenId: string): Promise<OrderBook> {
         if (!this.client) throw new Error("Client not authenticated");
-        // Ensure proxy is used
         const book = await this.client.getOrderBook(tokenId);
         return {
             bids: book.bids.map(b => ({ price: parseFloat(b.price), size: parseFloat(b.size) })),
@@ -292,11 +306,12 @@ export class PolymarketAdapter implements IExchangeAdapter {
     async fetchPublicTrades(address: string, limit: number = 20): Promise<TradeSignal[]> {
         try {
             const url = `https://data-api.polymarket.com/activity?user=${address}&limit=${limit}`;
-            // Use dedicated proxy
+            // Use dedicated proxy with spoofed headers
             const agent = new HttpsProxyAgent(PROXY_URL);
             const res = await axios.get<PolyActivityResponse[]>(url, {
                 httpsAgent: agent,
-                proxy: false
+                proxy: false,
+                headers: BROWSER_HEADERS
             });
             
             if (!res.data || !Array.isArray(res.data)) return [];
