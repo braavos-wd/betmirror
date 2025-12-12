@@ -15,8 +15,8 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY tsconfig.json ./
 
-# Install dependencies including devDependencies
-RUN npm ci
+# Install dependencies using npm install (more robust than ci for mismatches)
+RUN npm install
 
 # Copy source code
 COPY . .
