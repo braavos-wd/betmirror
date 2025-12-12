@@ -12,10 +12,10 @@
 - **Auto-Cashout:** Automatically sweeps excess profits to your main wallet.
 - **Real PnL Tracking:** Tracks entry and exit prices to calculate actual profit.
 
-### 🛡️ Security Vault (Phase 1)
-- **Managed Proxy Wallets:** The system generates a dedicated "Hot Wallet" (EOA) for every user.
-- **Revocation:** Users can revoke the Proxy's ability to spend USDC via the UI instantly.
-- **Trustless Withdrawal:** Users can trigger a withdrawal from their own dashboard.
+### 🛡️ Security Vault
+- **Managed Trading Wallets:** The system generates a dedicated EOA for every user.
+- **Encryption:** Keys are encrypted at rest.
+- **Withdrawal:** Users can request a withdrawal to their Main Wallet at any time via the dashboard.
 
 ### 🧠 AI Risk Agent (Gemini 2.5)
 - **Contextual Analysis:** Reads markets and outcomes.
@@ -30,11 +30,9 @@
 
 ## 🚧 Roadmap (In Development)
 
-### 🌉 Cross-Chain Onboarding (Phase 2)
-- **LiFi Integration:** Fund your bot directly from Solana, Base, or Ethereum Mainnet without manual bridging.
-- **One-Click Deposit:** Swap & Bridge in a single transaction.
+### 🌉 Cross-Chain Onboarding (Live)
+- **LiFi Integration:** Fund your bot directly from Solana, Base, or Ethereum Mainnet.
 
-### 🔐 Account Abstraction (Phase 3)
-- **Smart Accounts:** Moving from Private Keys to Smart Contracts.
-- **Session Keys:** Grant the server "Trading Only" permissions. It literally cannot withdraw your funds.
-- **Gas Abstraction:** Pay network fees in USDC.
+### ⚡ Real-Time Data
+- **WebSockets:** Migration from HTTP Polling to CLOB WebSockets for ms-level latency.
+- **Frontrunning Protection:** Execute trades in the same block as the whale.

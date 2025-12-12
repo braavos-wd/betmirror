@@ -4,6 +4,7 @@ import cors from 'cors';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import 'dotenv/config';
+import mongoose from 'mongoose';
 import { BotEngine, BotConfig } from './bot-engine.js';
 import { TradingWalletConfig } from '../domain/wallet.types.js';
 import { connectDB, User, Registry, Trade, Feedback, BridgeTransaction, BotLog, DepositLog } from '../database/index.js';
@@ -91,9 +92,14 @@ async function startUserBot(userId: string, config: BotConfig) {
 }
 
 // 0. Health Check
+// Updated to check DB status explicitly
 app.get('/health', (req, res) => {
+    const dbState = mongoose.connection.readyState;
+    const dbStatusMap = { 0: 'disconnected', 1: 'connected', 2: 'connecting', 3: 'disconnecting' };
+    
     res.status(200).json({ 
         status: 'ok', 
+        db: (dbStatusMap as any)[dbState] || 'unknown',
         uptime: process.uptime(),
         activeBots: ACTIVE_BOTS.size,
         timestamp: new Date()
@@ -567,12 +573,22 @@ async function restoreBots() {
     }
 }
 
-// ... [Connect DB and Listen] ...
-connectDB(ENV.mongoUri).then(async () => {
-    registryAnalytics.updateAllRegistryStats(); 
-    
-    app.listen(Number(PORT), '0.0.0.0', () => {
-        console.log(`🌍 Bet Mirror Cloud Server running on port ${PORT}`);
-        restoreBots();
-    });
+// --- BOOTSTRAP ---
+// 1. Start HTTP Server immediately (Health Check requirement)
+const server = app.listen(Number(PORT), '0.0.0.0', () => {
+    console.log(`🌍 Bet Mirror Cloud Server running on port ${PORT}`);
 });
+
+// 2. Connect to DB asynchronously (Non-blocking)
+connectDB(ENV.mongoUri)
+    .then(async () => {
+        console.log("✅ DB Connected. Initializing background services...");
+        registryAnalytics.updateAllRegistryStats(); 
+        restoreBots();
+    })
+    .catch((err) => {
+        // Log critical failure but keep server alive for debug/health endpoints
+        console.error("❌ CRITICAL: DB Connection Failed. Server running in degraded mode.");
+        console.error("   Reason: " + err.message);
+        console.error("   Ensure your IP is whitelisted in MongoDB Atlas (0.0.0.0/0 for cloud).");
+    });

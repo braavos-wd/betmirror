@@ -3,17 +3,17 @@
 
 ![Bet Mirror Header](./docs/assets/header.png)
 
-**Institutional-grade Polymarket Copy Trading Terminal. Features Non-Custodial Smart Accounts (ERC-4337), AI Risk Analysis (Gemini), and Cross-Chain funding via Li.Fi.**
+**Institutional-grade Polymarket Copy Trading Terminal. Features Dedicated Trading Wallets, AI Risk Analysis (Gemini), and Cross-Chain funding via Li.Fi.**
 
-**Bet Mirror Pro** is an enterprise-grade trading terminal designed to democratize algorithmic prediction market trading. Unlike traditional bots that require custodial private keys, Bet Mirror leverages **ERC-4337 Account Abstraction** to offer a fully non-custodial solution. Users retain full control of their funds while granting restricted "Session Keys" to a cloud-based engine that executes trades 24/7 based on **AI Risk Analysis** and **Copy Trading signals**. The platform includes a built-in "Alpha Registry" marketplace, rewarding top traders with a 1% protocol fee from every copier.
+**Bet Mirror Pro** is an enterprise-grade trading terminal designed to democratize algorithmic prediction market trading. Unlike traditional bots that require you to keep your browser open, Bet Mirror uses a **Hybrid Cloud Architecture**. It generates a **Dedicated Trading Wallet** (EOA) for every user, secured by AES-256 encryption. This allows the cloud engine to execute trades 24/7 based on **AI Risk Analysis** and **Copy Trading signals**, while ensuring your main savings wallet remains untouched. The platform includes a built-in "Alpha Registry" marketplace, rewarding top traders with a 1% protocol fee from every copier.
 
 Developed by **PolyCafe**.
 
 ![License](https://img.shields.io/badge/license-Apache_2.0-blue)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)
-![React](https://img.shields.io/badge/React-18-blue)
+![React](https://img.shields.io/badge/React-19-blue)
 ![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-green)
-![ZeroDev](https://img.shields.io/badge/ZeroDev-AA-purple)
+![Encryption](https://img.shields.io/badge/Security-AES--256-red)
 
 ---
 
@@ -22,11 +22,10 @@ Developed by **PolyCafe**.
 Bet Mirror Pro transforms complex algorithmic trading into a simple 3-step process for the end user.
 
 ### 1. The Smart Onboarding
-- **Connect:** User connects their standard EOA (Metamask, Phantom, Rainbow).
-- **Network Check:** The app will prompt you to switch to **Polygon** to sign the activation. 
-  > *Why?* Your Smart Account lives on Polygon. Even if your funds are on Base or Solana, your Wallet acts as the "Root Admin" on the Polygon network to control the bot.
-- **Deploy:** The app automatically deploys a **ZeroDev Smart Account** (Kernel v3.1) owned by your wallet.
-- **Session Keys:** You sign a specific "Session Key" that grants the Bot Server permission to **Trade Only**. The server cannot withdraw funds.
+- **Connect:** User connects their standard Main Wallet (Metamask, Phantom, Rainbow).
+- **Generate:** The system automatically generates a dedicated **Trading Wallet** (EOA) on the server.
+- **Security:** The private key is immediately encrypted using **AES-256** and stored in the database. It is only decrypted in memory when a trade needs to be signed.
+- **Isolation:** This isolates your trading capital from your main savings. Even if the bot were compromised, your Main Wallet remains safe.
 
 ### 2. The Cloud Engine (Server-Side)
 - **Persistence:** Once the bot is started, it runs on our Node.js cloud cluster backed by **MongoDB**.
@@ -36,7 +35,7 @@ Bet Mirror Pro transforms complex algorithmic trading into a simple 3-step proce
 ### 3. The Marketplace & Profit
 - **Copy Trading:** Users browse the **Alpha Registry** to find whales with high win rates.
 - **Fee Sharing:** When a user profits from a copied trade, a **1% fee** is automatically sent to the **Lister** (the user who found and listed the wallet) and **1%** to the Platform. This rewards discovery.
-- **Trustless Withdraw:** Users can trigger a forced withdrawal from the dashboard at any time, bypassing the server entirely.
+- **Withdrawal:** Users can trigger a withdrawal from the dashboard at any time, sweeping funds back to their Main Wallet.
 
 ---
 
@@ -86,7 +85,7 @@ You can seed the Marketplace with "Official" or "System" wallets (e.g., trusted 
 
 ### 📊 The Dashboard
 The command center. View your Real-Time PnL, Active Positions, and System Logs.
-> *Displays wallet balances (Native & Smart Account), Live Trade Console, and Performance Metrics.*
+> *Displays wallet balances (Main & Trading Wallet), Live Trade Console, and Performance Metrics.*
 
 ### 🔒 The Vault
 Security first. Configure your AI Risk settings and manage automation.
@@ -98,18 +97,18 @@ A decentralized marketplace for trading signals.
 
 ### 🌉 Cross-Chain Bridge
 Fund your bot from anywhere.
-> *Integrated Li.Fi Widget allows deposits from Ethereum, Base, Solana, and Arbitrum directly into the Polygon Smart Account.*
+> *Integrated Li.Fi Widget allows deposits from Ethereum, Base, Solana, and Arbitrum directly into the Polygon Trading Wallet.*
 
 ---
 
 ## 🏗 System Architecture
 
-The platform uses a hybrid architecture combining centralized execution speed with decentralized custody.
+The platform uses a hybrid architecture combining centralized execution speed with encrypted security.
 
 ```mermaid
 graph TD
     subgraph "Client Layer"
-        User(("👤 User (EOA)"))
+        User(("👤 User (Main Wallet)"))
         Browser["🖥️ Web Terminal (React)"]
     end
 
@@ -121,24 +120,22 @@ graph TD
 
     subgraph "Blockchain & Execution"
         LiFi["🌉 Li.Fi Protocol"]
-        ZeroDev["🛡️ ZeroDev Bundler"]
-        SmartAccount["🏦 Kernel Smart Account (Polygon)"]
+        TradingWallet["🔐 Trading Wallet (EOA)"]
         CLOB["⚡ Polymarket CLOB"]
     end
 
     %% Flows
-    User -->|"1. Connect & Sign Session"| Browser
+    User -->|"1. Connect & Auth"| Browser
     Browser -->|"2. Bridge Funds"| LiFi
-    LiFi -.->|"USDC Deposit"| SmartAccount
+    LiFi -.->|"USDC Deposit"| TradingWallet
     
-    Browser -->|"3. Encrypted Session Key"| API
-    API <-->|"4. Persist State"| DB
+    Browser -->|"3. Request Activation"| API
+    API -->|"4. Generate & Encrypt Key"| DB
     
     API -->|"5. Risk Analysis"| Gemini
     
-    API -->|"6. Sign Trade (Builder Headers)"| ZeroDev
-    ZeroDev -->|"7. Execute UserOp"| SmartAccount
-    SmartAccount -->|"8. Settle Trade"| CLOB
+    API -->|"6. Sign Trade (Encrypted Key)"| TradingWallet
+    TradingWallet -->|"7. Execute Order"| CLOB
 ```
 
 ---
@@ -158,7 +155,7 @@ graph TD
 *   **Frontend:** React, Vite, TailwindCSS, Lucide Icons.
 *   **Backend:** Node.js, Express, TypeScript.
 *   **Database:** MongoDB (Mongoose ODM).
-*   **Web3:** Viem, Ethers.js, ZeroDev SDK (Kernel v3.1), Li.Fi SDK.
+*   **Web3:** Viem, Ethers.js.
 *   **AI:** Google GenAI SDK (Gemini 2.5).
 
 ---
@@ -166,9 +163,8 @@ graph TD
 ## 🚀 Quick Start Guide
 
 ### 1. Prerequisites
-- Node.js v18+
+- Node.js v20+
 - MongoDB Atlas Cluster (Free Tier is fine)
-- ZeroDev Project ID (Free Tier)
 - Google Gemini API Key (Free)
 
 ### 2. Installation
@@ -185,10 +181,9 @@ Create a `.env` file in the root directory:
 # --- Database (Required) ---
 MONGODB_URI=mongodb+srv://<user>:<pass>@cluster.mongodb.net/?retryWrites=true&w=majority
 
-# --- Account Abstraction (Required) ---
-# Get this from dashboard.zerodev.app (Polygon Mainnet)
-ZERODEV_PROJECT_ID=your_project_id
-ZERODEV_RPC=https://rpc.zerodev.app/api/v2/bundler/your_project_id
+# --- Security (Required) ---
+# A random 32-byte string for AES encryption. Generate one with `openssl rand -hex 32`
+MONGO_ENCRYPTION_KEY=your_secure_random_key_here
 
 # --- Admin Revenue ---
 # Wallet that receives 1% platform fees
@@ -217,16 +212,32 @@ docker run -p 3000:3000 -e MONGODB_URI=... bet-mirror
 
 ---
 
+## 🚑 Troubleshooting
+
+### MongoDB Connection Error on Deployment
+If you see `MongooseServerSelectionError` in your cloud logs (Sliplane, Railway, etc.), it means the server cannot reach MongoDB Atlas.
+
+**Cause:** MongoDB Atlas blocks unknown IP addresses by default. Cloud providers use dynamic IPs.
+
+**Fix:**
+1.  Log in to **MongoDB Atlas**.
+2.  Go to **Network Access** (Security sidebar).
+3.  Click **+ Add IP Address**.
+4.  Select **"Allow Access from Anywhere"** (0.0.0.0/0).
+5.  Confirm. The deployment should now succeed on retry.
+
+---
+
 ## 🔒 Security Model
 
 | Component | Responsibility | Access Level |
 | :--- | :--- | :--- |
-| **Owner Key** | Held by User (Phantom/Metamask) | **Full Admin**. Can withdraw funds, revoke keys, update settings. |
-| **Session Key** | Held by Server (Encrypted DB) | **Limited**. Can only execute trades. Cannot withdraw. |
-| **Database** | MongoDB Atlas | Stores Config, History, and Encrypted Session Keys. |
+| **Main Wallet** | Held by User (Phantom/Metamask) | **Fund Source**. Used to deposit and receive profits. Safely isolated. |
+| **Trading Key** | Held by Server (Encrypted DB) | **Execution**. Used to sign trades. Encrypted at rest. |
+| **Database** | MongoDB Atlas | Stores Config, History, and Encrypted Keys. |
 
 ---
 
 ## ⚠️ Disclaimer
 
-This software is for educational purposes only. Prediction markets involve risk. The "Trustless" architecture protects against server-side theft, but it does not protect against bad trading decisions or smart contract bugs. Use at your own risk.
+This software is for educational purposes only. Prediction markets involve risk. While we encrypt keys, this uses a custodial trading wallet model to enable automation. Never deposit more than you can afford to lose.

@@ -217,6 +217,8 @@ export const connectDB = async (uri: string) => {
     console.log(`📦 Connected to MongoDB successfully (${uri.includes('mongodb.net') ? 'Atlas Cloud' : 'Local'})`);
   } catch (error) {
     console.error('❌ MongoDB Connection Error:', error);
-    process.exit(1);
+    // Do NOT exit process. This kills the container and fails deployment health checks.
+    // Instead, throw error so the caller knows, but keeps the HTTP server alive.
+    throw error;
   }
 };
