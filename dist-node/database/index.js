@@ -115,7 +115,12 @@ export const connectDB = async (uri) => {
         // Mask URI for safety in logs
         const maskedUri = uri.replace(/:\/\/.*@/, '://***:***@');
         console.log(`🔌 Attempting to connect to MongoDB...`);
-        await mongoose.connect(uri);
+        // Optimized connection options for cloud containers
+        await mongoose.connect(uri, {
+            serverSelectionTimeoutMS: 15000, // Wait 15s before giving up
+            socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
+            family: 4 // FORCE IPv4 (Fixes issues where container tries IPv6 on networks that don't support it)
+        });
         // --- FIX: Drop Legacy Index ---
         try {
             if (mongoose.connection.db) {

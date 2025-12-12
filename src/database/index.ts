@@ -219,7 +219,14 @@ export const connectDB = async (uri: string) => {
         // Ignore
     }
     
-    console.log(`📦 Connected to MongoDB successfully (${uri.includes('mongodb.net') ? 'Atlas Cloud' : 'Local'})`);
+    // Detailed Connection Logging
+    const dbName = mongoose.connection.name;
+    const dbHost = mongoose.connection.host;
+    console.log(`📦 Connected to MongoDB successfully!`);
+    console.log(`   - Host: ${dbHost}`);
+    console.log(`   - DB Name: ${dbName}`);
+    console.log(`   - Environment: ${uri.includes('mongodb.net') ? 'Atlas Cloud' : 'Local/Self-Hosted'}`);
+
   } catch (error) {
     console.error('❌ MongoDB Connection Error:', error);
     // Do NOT exit process. This kills the container and fails deployment health checks.

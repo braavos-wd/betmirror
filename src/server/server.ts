@@ -113,21 +113,24 @@ app.post('/api/wallet/status', async (req: any, res: any) => {
   const normId = userId.toLowerCase();
 
   try {
+      console.log(`[STATUS CHECK] Querying user: ${normId}`);
       const user = await User.findOne({ address: normId });
       
       // If user has a wallet, return it (regardless of type for now, though we prefer TRADING_EOA)
       if (!user || !user.tradingWallet) {
+        console.log(`[STATUS CHECK] User ${normId} needs activation.`);
         res.json({ status: 'NEEDS_ACTIVATION' });
       } else {
+        console.log(`[STATUS CHECK] Found active wallet for ${normId}: ${user.tradingWallet.address}`);
         res.json({ 
             status: 'ACTIVE', 
             address: user.tradingWallet.address,
             type: user.tradingWallet.type
         });
       }
-  } catch (e) {
-      console.error(e);
-      res.status(500).json({ error: 'DB Error' });
+  } catch (e: any) {
+      console.error("[STATUS CHECK ERROR]", e);
+      res.status(500).json({ error: 'DB Error: ' + e.message });
   }
 });
 
@@ -554,7 +557,8 @@ async function restoreBots() {
     try {
         // Debug: Check total users first
         const totalUsers = await User.countDocuments();
-        console.log(`Diagnostic: Total Users in DB: ${totalUsers}`);
+        const dbName = mongoose.connection.name;
+        console.log(`Diagnostic: DB [${dbName}] contains ${totalUsers} users.`);
 
         const activeUsers = await User.find({ isBotRunning: true, activeBotConfig: { $exists: true } });
         console.log(`Found ${activeUsers.length} active bots to restore (isBotRunning=true).`);
