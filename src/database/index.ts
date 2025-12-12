@@ -199,7 +199,11 @@ export const connectDB = async (uri: string) => {
     const maskedUri = uri.replace(/:\/\/.*@/, '://***:***@');
     console.log(`🔌 Attempting to connect to MongoDB...`);
     
-    await mongoose.connect(uri);
+    await mongoose.connect(uri, {
+      serverSelectionTimeoutMS: 15000, // Increase timeout to 15s
+      socketTimeoutMS: 45000, // Increase socket timeout
+      family: 4 // Force IPv4 to avoid potential IPv6 issues in some cloud environments
+    });
 
     // --- FIX: Drop Legacy Index ---
     try {
