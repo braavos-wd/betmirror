@@ -221,6 +221,12 @@ npm run dev:all
   ```
   *(Requires user confirmation. Useful for testing the Activation/Restoration flow from scratch).*
 
+- **Deep Rescue Tool:** Emergency CLI to recover funds from a "Lost" Safe or EOA if the UI is inaccessible.
+  ```bash
+  npm run rescue
+  ```
+  *(Scans local backups and database for encrypted keys to execute emergency withdrawals).*
+
 ### 6. Production Build (Docker)
 Deploying to a cloud provider (Railway, Sliplane, DigitalOcean)? Use the Dockerfile.
 ```bash

@@ -71,7 +71,8 @@ We utilize a Hybrid Safe Model to ensure 100% compatibility with Polymarket's hi
 To withdraw funds:
 1.  Use the **Withdraw** button on the Dashboard.
 2.  This triggers the server to instruct the Relayer to move funds from your Safe back to your Main Wallet.
-3.  **Manual Recovery:** Since this is a standard Gnosis Safe, you can always recover funds by interacting with the Safe contracts directly if the platform goes offline, provided you have the Signer key (exportable via admin request).
+3.  **Manual Recovery (Trustless):** If you enabled **Multi-Sig Sovereignty** in the Vault, your Main Wallet is a co-owner of the Safe. You can interact directly with the Gnosis Safe contracts on Etherscan or the Gnosis UI to move funds, bypassing the Bet Mirror server entirely.
+4.  **Legacy Recovery:** If you haven't upgraded to Multi-Sig, recovery requires the encrypted Signer key (exportable via admin request or the CLI Rescue Tool).
 
 ---
 
