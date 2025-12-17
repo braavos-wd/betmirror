@@ -1,3 +1,4 @@
+
 import 'dotenv/config';
 import mongoose from 'mongoose';
 import { loadEnv } from '../config/env.js';

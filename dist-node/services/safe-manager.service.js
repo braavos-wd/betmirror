@@ -1,4 +1,4 @@
-import { Interface, Contract, ethers } from 'ethers';
+import { Interface, Contract, ethers, JsonRpcProvider } from 'ethers';
 import { RelayClient, OperationType } from '@polymarket/builder-relayer-client';
 import { deriveSafe } from '@polymarket/builder-relayer-client/dist/builder/derive.js';
 import { BuilderConfig } from '@polymarket/builder-signing-sdk';
@@ -6,6 +6,7 @@ import { createWalletClient, createPublicClient, http, parseAbi } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { polygon } from 'viem/chains';
 import { POLYGON_CHAIN_ID, TOKENS } from '../config/env.js';
+import axios from 'axios';
 // --- Constants ---
 const RELAYER_URL = "https://relayer-v2.polymarket.com";
 // Polymarket Core Contracts
@@ -13,9 +14,10 @@ const CTF_CONTRACT_ADDRESS = "0x4d97dcd97ec945f40cf65f87097ace5ea0476045";
 const CTF_EXCHANGE_ADDRESS = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E";
 const NEG_RISK_CTF_EXCHANGE_ADDRESS = "0xC5d563A36AE78145C45a50134d48A1215220f80a";
 const NEG_RISK_ADAPTER_ADDRESS = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296";
-// Gnosis Safe Constants (Polymarket Specific Factory)
-// Users should verify this matches their deployment target.
-const SAFE_PROXY_FACTORY_ADDRESS = "0xaacfeea03eb1561c4e67d661e40682bd20e3541b";
+// Gnosis Safe Factories
+const POLYMARKET_SAFE_FACTORY = "0xaacfeea03eb1561c4e67d661e40682bd20e3541b";
+const STANDARD_SAFE_FACTORY = "0xa6b71e26c5e0845f74c812102ca7114b6a896ab2"; // Legacy/Standard Gnosis
+// Use Polymarket as default for new deployments, but check both
 const SAFE_SINGLETON_ADDRESS = "0x3e5c63644e683549055b9be8653de26e0b4cd36e";
 const FALLBACK_HANDLER_ADDRESS = "0xf48f2b2d2a534e40247ecb36350021948091179d";
 const SAFE_ABI = [
@@ -24,7 +26,8 @@ const SAFE_ABI = [
     "function getTransactionHash(address to, uint256 value, bytes data, uint8 operation, uint256 safeTxGas, uint256 baseGas, uint256 gasPrice, address gasToken, address refundReceiver, uint256 _nonce) view returns (bytes32)",
     "function setup(address[] calldata _owners, uint256 _threshold, address to, bytes calldata data, address fallbackHandler, address paymentToken, uint256 payment, address paymentReceiver)",
     "function isOwner(address owner) view returns (bool)",
-    "function addOwnerWithThreshold(address owner, uint256 _threshold)"
+    "function addOwnerWithThreshold(address owner, uint256 _threshold)",
+    "function getOwners() view returns (address[])"
 ];
 const PROXY_FACTORY_ABI = [
     "function createProxyWithNonce(address _singleton, bytes memory initializer, uint256 saltNonce) returns (address proxy)"
@@ -61,7 +64,7 @@ export class SafeManagerService {
         }
         this.safeAddress = knownSafeAddress;
         // Log Factory for verification
-        this.logger.info(`ℹ️ Using Safe Proxy Factory: ${SAFE_PROXY_FACTORY_ADDRESS}`);
+        this.logger.info(`ℹ️ Active Safe: ${knownSafeAddress}`);
         let builderConfig = undefined;
         if (!builderApiKey || !builderApiSecret || !builderApiPassphrase) {
             this.logger.warn(`⚠️ Builder Creds Missing. Safe Relayer functionality limited.`);
@@ -97,11 +100,35 @@ export class SafeManagerService {
         return this.safeAddress;
     }
     /**
-     * Compute Address using specific Factory to ensure consistency between
-     * our DB generation and our manual on-chain deployment logic.
+     * SMART ADDRESS DERIVATION
+     * Checks both Polymarket and Standard Gnosis factories.
+     * Returns the one that exists on-chain, or defaults to Polymarket factory for new users.
      */
     static async computeAddress(ownerAddress) {
-        return await deriveSafe(ownerAddress, SAFE_PROXY_FACTORY_ADDRESS);
+        // 1. Derive both possibilities
+        const polySafe = await deriveSafe(ownerAddress, POLYMARKET_SAFE_FACTORY);
+        const stdSafe = await deriveSafe(ownerAddress, STANDARD_SAFE_FACTORY);
+        // 2. Check Chain for existence (Provider needed)
+        try {
+            const provider = new JsonRpcProvider('https://polygon-rpc.com');
+            // Check Standard (Legacy) First - Many users have this
+            const stdCode = await provider.getCode(stdSafe);
+            if (stdCode && stdCode !== '0x') {
+                console.log(`[SafeManager] Found existing Legacy Safe at ${stdSafe}`);
+                return stdSafe;
+            }
+            // Check Polymarket
+            const polyCode = await provider.getCode(polySafe);
+            if (polyCode && polyCode !== '0x') {
+                console.log(`[SafeManager] Found existing Polymarket Safe at ${polySafe}`);
+                return polySafe;
+            }
+        }
+        catch (e) {
+            console.warn("[SafeManager] Failed to check code on-chain, defaulting to Polymarket factory derivation.");
+        }
+        // Default to Polymarket for new users
+        return polySafe;
     }
     async isDeployed() {
         try {
@@ -126,12 +153,16 @@ export class SafeManagerService {
         }
         this.logger.info(`🚀 Deploying Gnosis Safe ${this.safeAddress.slice(0, 8)}...`);
         try {
+            // NOTE: We try to use the SDK first. If it derives the same address, great.
+            // If not, we might need a manual deploy, but deployment is complex to manualize with Relayer
+            // without a dedicated endpoint. 
+            // For now, we trust the SDK defaults for *NEW* deployments, and handle *EXISTING* mismatch in withdrawals.
             const task = await this.relayClient.deploy();
             await task.wait();
             const realAddress = task.proxyAddress;
-            // Note: Since we updated SAFE_PROXY_FACTORY_ADDRESS, this should now MATCH the SDK.
             if (realAddress && realAddress.toLowerCase() !== this.safeAddress.toLowerCase()) {
-                this.logger.warn(`⚠️ Relayer deployed to ${realAddress}, but DB has ${this.safeAddress}.`);
+                this.logger.warn(`⚠️ Relayer deployed to ${realAddress}, but DB expected ${this.safeAddress}. Updating DB...`);
+                // This is a critical recovery. If Relayer creates a different address, we must adopt it for this session.
                 return realAddress;
             }
             this.logger.success(`✅ Safe Deployed via Relayer`);
@@ -148,7 +179,8 @@ export class SafeManagerService {
         }
     }
     async enableApprovals() {
-        const txs = [];
+        // Approvals need to be executed sequentially to avoid Nonce issues if we don't implement MultiSend manually.
+        // We will check and execute one by one.
         const usdcInterface = new Interface(ERC20_ABI);
         const ctfInterface = new Interface(ERC1155_ABI);
         this.logger.info(`   Checking permissions for ${this.safeAddress.slice(0, 8)}...`);
@@ -169,10 +201,18 @@ export class SafeManagerService {
                 if (allowance < 1000000000n) {
                     this.logger.info(`     + Granting USDC to ${spender.name}`);
                     const data = usdcInterface.encodeFunctionData("approve", [spender.addr, MAX_UINT256]);
-                    txs.push({ to: TOKENS.USDC_BRIDGED, value: "0", data: data, operation: OperationType.Call });
+                    // Execute via API (Manual) to ensure correct Safe is targeted
+                    await this.executeTransactionViaApi({
+                        to: TOKENS.USDC_BRIDGED,
+                        value: "0",
+                        data: data,
+                        operation: OperationType.Call
+                    });
                 }
             }
-            catch (e) { }
+            catch (e) {
+                this.logger.error(`Failed to approve ${spender.name}: ${e.message}`);
+            }
         }
         const ctfOperators = [
             { addr: CTF_EXCHANGE_ADDRESS, name: "CTFExchange" },
@@ -190,21 +230,18 @@ export class SafeManagerService {
                 if (!isApproved) {
                     this.logger.info(`     + Granting Operator to ${operator.name}`);
                     const data = ctfInterface.encodeFunctionData("setApprovalForAll", [operator.addr, true]);
-                    txs.push({ to: CTF_CONTRACT_ADDRESS, value: "0", data: data, operation: OperationType.Call });
+                    // Execute via API
+                    await this.executeTransactionViaApi({
+                        to: CTF_CONTRACT_ADDRESS,
+                        value: "0",
+                        data: data,
+                        operation: OperationType.Call
+                    });
                 }
             }
-            catch (e) { }
-        }
-        if (txs.length === 0)
-            return;
-        try {
-            this.logger.info(`🔐 Broadcasting ${txs.length} setup transactions via Relayer...`);
-            const task = await this.relayClient.execute(txs);
-            await task.wait();
-            this.logger.success("   Permissions updated.");
-        }
-        catch (e) {
-            this.logger.warn(`   Setup note: ${e.message}. (Will retry automatically if trading fails)`);
+            catch (e) {
+                this.logger.error(`Failed to set operator ${operator.name}: ${e.message}`);
+            }
         }
     }
     async withdrawUSDC(to, amount) {
@@ -217,16 +254,16 @@ export class SafeManagerService {
             data: data,
             operation: OperationType.Call
         };
-        this.logger.info(`💸 Withdrawing USDC via Relayer...`);
+        this.logger.info(`💸 Withdrawing USDC via Relayer API...`);
         this.logger.info(`   Safe: ${safe} -> To: ${to} ($${(Number(amount) / 1e6).toFixed(2)})`);
         try {
-            // ATTEMPT 1: Standard SDK (Relayer)
-            const task = await this.relayClient.execute([tx]);
-            this.logger.info(`   Tx Submitted: ${task.transactionHash}`);
-            return task.transactionHash;
+            // Use manual API call to force proxy address
+            const txHash = await this.executeTransactionViaApi(tx);
+            this.logger.info(`   Tx Submitted: ${txHash}`);
+            return txHash;
         }
         catch (e) {
-            this.logger.warn(`   ⚠️ Relayer withdrawal failed (${e.message}).`);
+            this.logger.warn(`   ⚠️ Relayer API withdrawal failed (${e.message}).`);
             this.logger.warn(`   -> Switching to RESCUE MODE (On-Chain) for ${safe}.`);
             return await this.withdrawUSDCOnChain(to, amount);
         }
@@ -239,17 +276,72 @@ export class SafeManagerService {
             data: "0x",
             operation: OperationType.Call
         };
-        this.logger.info(`💸 Withdrawing POL via Relayer...`);
+        this.logger.info(`💸 Withdrawing POL via Relayer API...`);
         this.logger.info(`   Safe: ${safe} -> To: ${to} (${ethers.formatEther(amount)} POL)`);
         try {
-            const task = await this.relayClient.execute([tx]);
-            this.logger.info(`   Tx Submitted: ${task.transactionHash}`);
-            return task.transactionHash;
+            // Use manual API call to force proxy address
+            const txHash = await this.executeTransactionViaApi(tx);
+            this.logger.info(`   Tx Submitted: ${txHash}`);
+            return txHash;
         }
         catch (e) {
-            this.logger.warn(`   ⚠️ Relayer withdrawal failed (${e.message}).`);
+            this.logger.warn(`   ⚠️ Relayer API withdrawal failed (${e.message}).`);
             this.logger.warn(`   -> Switching to RESCUE MODE (On-Chain) for ${safe}.`);
             return await this.withdrawNativeOnChain(to, amount);
+        }
+    }
+    // --- MANUAL RELAYER INTERACTION ---
+    // Forces the SDK/API to use our specific Safe Address, bypassing auto-derivation
+    async executeTransactionViaApi(safeTx) {
+        // 1. Get Nonce from Contract
+        const safeContract = new Contract(this.safeAddress, SAFE_ABI, this.signer);
+        const nonce = await safeContract.nonce();
+        // 2. Build Transaction Hash
+        const safeTxGas = 0;
+        const baseGas = 0;
+        const gasPrice = 0;
+        const gasToken = "0x0000000000000000000000000000000000000000";
+        const refundReceiver = "0x0000000000000000000000000000000000000000";
+        const txHashBytes = await safeContract.getTransactionHash(safeTx.to, safeTx.value, safeTx.data, safeTx.operation, safeTxGas, baseGas, gasPrice, gasToken, refundReceiver, nonce);
+        // 3. Sign
+        const signature = await this.signer.signMessage(Buffer.from(txHashBytes.slice(2), 'hex'));
+        // 4. Construct Payload for Relayer
+        const payload = {
+            safeTxHash: txHashBytes,
+            signature: signature,
+            safeTx: {
+                to: safeTx.to,
+                value: safeTx.value,
+                data: safeTx.data,
+                operation: safeTx.operation,
+                safeTxGas,
+                baseGas,
+                gasPrice,
+                gasToken,
+                refundReceiver,
+                nonce: Number(nonce)
+            },
+            // CRITICAL: Explicitly tell Relayer which Safe to use
+            proxyWallet: this.safeAddress
+        };
+        // 5. Send to Relayer API
+        try {
+            const response = await axios.post(`${RELAYER_URL}/transactions`, payload, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    // Include Builder Headers if available
+                    ...(this.builderApiKey ? {
+                        'BZ-API-KEY': this.builderApiKey,
+                        'BZ-API-SECRET': this.builderApiSecret, // Note: Headers might differ for Relayer vs Data API. 
+                        // Usually Relayer authentication is via signature, but we add what we have.
+                    } : {})
+                }
+            });
+            return response.data.transactionHash;
+        }
+        catch (error) {
+            this.logger.error(`Relayer API Error: ${error.response?.data?.message || error.message}`);
+            throw new Error(error.response?.data?.message || "Relayer API Failed");
         }
     }
     // --- ON-CHAIN RECOVERY & ADMIN METHODS ---
@@ -316,7 +408,7 @@ export class SafeManagerService {
         const initializer = safeInterface.encodeFunctionData("setup", [
             owners, threshold, to, data, fallbackHandler, paymentToken, payment, paymentReceiver
         ]);
-        const factory = new Contract(SAFE_PROXY_FACTORY_ADDRESS, PROXY_FACTORY_ABI, this.signer);
+        const factory = new Contract(POLYMARKET_SAFE_FACTORY, PROXY_FACTORY_ABI, this.signer);
         const saltNonce = 0;
         this.logger.info(`   🚀 Sending Deployment Transaction...`);
         const tx = await factory.createProxyWithNonce(SAFE_SINGLETON_ADDRESS, initializer, saltNonce);

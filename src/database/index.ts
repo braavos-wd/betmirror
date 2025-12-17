@@ -21,7 +21,9 @@ export interface IUser extends Document {
   lastActive: Date;
 }
 
-export interface ITrade extends Document {
+// FIX: Override _id to allow String UUIDs from Polymarket
+export interface ITrade extends Omit<Document, '_id'> {
+  _id: string; 
   userId: string;
   marketId: string;
   // NEW FIELDS FOR CLOB TRACKING
@@ -138,6 +140,7 @@ const UserSchema = new Schema<IUser>({
 });
 
 const TradeSchema = new Schema<ITrade>({
+  _id: { type: String, required: true }, // Explicitly define _id as String to accept UUIDs
   userId: { type: String, required: true, index: true },
   marketId: { type: String, required: true },
   clobOrderId: { type: String, index: true }, // Fast lookups

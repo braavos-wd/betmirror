@@ -235,7 +235,7 @@ export class BotEngine {
             await this.exchange.initialize();
             const isFunded = await this.checkFunding();
             if (!isFunded) {
-                await this.addLog('warn', '💰 Safe Empty. Engine standby. Waiting for deposit to Safe...');
+                await this.addLog('warn', '💰 Safe Empty. Engine standby. Waiting for deposit to Safe (Min $1.00)...');
                 this.startFundWatcher();
                 return;
             }
@@ -268,7 +268,8 @@ export class BotEngine {
             const balanceUSDC = await this.exchange.fetchBalance(funderAddr);
             if (this.activePositions.length > 0)
                 return true;
-            return balanceUSDC >= 0.5;
+            // UPDATE: Check for at least $1.00 to avoid "Minimum Order" loops
+            return balanceUSDC >= 1.0;
         }
         catch (e) {
             return false;
@@ -397,6 +398,7 @@ export class BotEngine {
                         if (signal.side === 'BUY') {
                             // 1. Create Trade Record
                             const tradeRecord = await Trade.create({
+                                _id: crypto.randomUUID(), // Force UUID for compatibility
                                 userId: this.config.userId,
                                 marketId: signal.marketId,
                                 outcome: signal.outcome,

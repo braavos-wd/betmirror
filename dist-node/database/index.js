@@ -52,6 +52,7 @@ const UserSchema = new Schema({
     createdAt: { type: Date, default: Date.now }
 });
 const TradeSchema = new Schema({
+    _id: { type: String, required: true }, // Explicitly define _id as String to accept UUIDs
     userId: { type: String, required: true, index: true },
     marketId: { type: String, required: true },
     clobOrderId: { type: String, index: true }, // Fast lookups

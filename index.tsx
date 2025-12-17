@@ -2219,124 +2219,116 @@ return (
                             </div>
                         </div>
                     </div>
-                    {/* Live Positions & History (Tabbed) */}
-                    <div className="glass-panel p-5 rounded-xl space-y-4 flex-1 flex flex-col">
-                        <div className="flex items-center justify-between border-b border-gray-200 dark:border-white/10 pb-2">
-                            <div className="flex gap-2">
+                    {/* Live Positions & History (Tabbed) - The Panel from Snippet */}
+                        <div className="glass-panel p-5 rounded-xl space-y-4 flex-1 flex flex-col bg-white dark:bg-zinc-900/50 border border-gray-200 dark:border-zinc-800 shadow-sm min-h-[600px]">
+                            {/* Tab Headers */}
+                            <div className="flex items-center gap-4 border-b border-gray-200 dark:border-white/5 pb-2">
                                 <button 
                                     onClick={() => setTradePanelTab('active')}
                                     className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${tradePanelTab === 'active' ? 'bg-gray-900 dark:bg-white text-white dark:text-black shadow-md' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/5'}`}
                                 >
-                                    Active ({activePositions.length})
+                                    Active Positions 
+                                    <span className="px-1.5 py-0.5 bg-gray-100 dark:bg-white/10 rounded-full text-[10px]">{activePositions.length}</span>
                                 </button>
                                 <button 
-                                    onClick={() => setTradePanelTab('history')}
-                                    className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${tradePanelTab === 'history' ? 'bg-gray-900 dark:bg-white text-white dark:text-black shadow-md' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/5'}`}
+                                    onClick={() => setActiveTab('history')}
+                                    className={`text-sm font-bold pb-2 border-b-2 transition-colors ${tradePanelTab === 'history' ? 'border-blue-500 text-blue-500' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
                                 >
                                     History
                                 </button>
                             </div>
-                            {/* Sync Button for Active Positions */}
-                            {tradePanelTab === 'active' && (
-                                <button 
-                                    onClick={handleSyncPositions}
-                                    disabled={isSyncingPositions}
-                                    className="p-1.5 text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 bg-gray-100 dark:bg-white/5 rounded-full transition-colors disabled:opacity-50"
-                                    title="Sync from Chain"
-                                >
-                                    <RefreshCw size={14} className={isSyncingPositions ? "animate-spin" : ""} />
-                                </button>
-                            )}
-                        </div>
-                        
-                        <div className="flex-1 overflow-y-auto">
-                            {tradePanelTab === 'active' ? (
-                                /* ACTIVE POSITIONS TAB */
-                                <div className="space-y-3">
-                                    {activePositions.length > 0 ? (
-                                        activePositions.map((pos) => {
-                                            // PnL Calculation
-                                            const currentPrice = pos.currentPrice || pos.entryPrice;
-                                            const value = pos.shares * currentPrice;
-                                            const pnl = value - pos.sizeUsd;
-                                            const pnlPercent = pos.sizeUsd > 0 ? (pnl / pos.sizeUsd) * 100 : 0;
-                                            const isProfitable = pnl >= 0;
+                            
+                            <div className="flex-1 overflow-y-auto custom-scrollbar">
+                                {tradePanelTab === 'active' ? (
+                                    /* ACTIVE POSITIONS TAB */
+                                    <div className="space-y-3">
+                                        {activePositions.length > 0 ? (
+                                            activePositions.map((pos) => {
+                                                const currentPrice = pos.currentPrice || pos.entryPrice;
+                                                const value = pos.shares * currentPrice;
+                                                const pnl = value - pos.sizeUsd;
+                                                const pnlPercent = pos.sizeUsd > 0 ? (pnl / pos.sizeUsd) * 100 : 0;
+                                                const isProfitable = pnl >= 0;
+                                                
+                                                // Defensive ID Check
+                                                const safeMarketId = pos.marketId || "UNKNOWN";
+                                                const shortId = safeMarketId.length > 8 ? safeMarketId.slice(0, 8) : safeMarketId;
 
-                                            return (
-                                                <div key={pos.marketId + pos.outcome} className="text-xs p-3 bg-white dark:bg-white/5 rounded-xl border border-gray-200 dark:border-white/10 hover:border-blue-500/30 transition-all shadow-sm group">
-                                                    {/* Card Header: Image & Title */}
-                                                    <div className="flex gap-3 mb-3">
-                                                        <div className="shrink-0 mt-1">
-                                                            {pos.image ? (
-                                                                <img 
-                                                                    src={pos.image} 
-                                                                    alt="Market" 
-                                                                    className="w-8 h-8 rounded-full object-cover bg-gray-200 dark:bg-gray-800"
-                                                                    onError={(e) => (e.target as any).style.display = 'none'}
-                                                                />
-                                                            ) : (
-                                                                <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-800 flex items-center justify-center text-gray-400">
-                                                                    <Activity size={14}/>
+                                                return (
+                                                    <div key={safeMarketId + pos.outcome} className="text-xs p-3 bg-white dark:bg-white/5 rounded-xl border border-gray-200 dark:border-white/10 hover:border-blue-500/30 transition-all shadow-sm group">
+                                                        {/* Card Header: Image & Title */}
+                                                        <div className="flex gap-3 mb-3">
+                                                            <div className="shrink-0 mt-1">
+                                                                {pos.image ? (
+                                                                    <img 
+                                                                        src={pos.image} 
+                                                                        alt="Market" 
+                                                                        className="w-8 h-8 rounded-full object-cover bg-gray-200 dark:bg-gray-800"
+                                                                        onError={(e) => (e.target as any).style.display = 'none'}
+                                                                    />
+                                                                ) : (
+                                                                    <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-800 flex items-center justify-center text-gray-400">
+                                                                        <Activity size={14}/>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="font-bold text-gray-900 dark:text-white line-clamp-2 leading-tight" title={pos.question || safeMarketId}>
+                                                                    {pos.question || safeMarketId}
                                                                 </div>
-                                                            )}
-                                                        </div>
-                                                        <div className="flex-1 min-w-0">
-                                                            <div className="font-bold text-gray-900 dark:text-white line-clamp-2 leading-tight" title={pos.question || pos.marketId}>
-                                                                {pos.question || pos.marketId}
-                                                            </div>
-                                                            <div className="text-[10px] text-gray-500 mt-1 flex items-center gap-2">
-                                                                <span className="font-mono">{pos.marketId.slice(0, 8)}...</span>
-                                                                {pos.endDate && <span>• Ends {new Date(pos.endDate).toLocaleDateString()}</span>}
+                                                                <div className="text-[10px] text-gray-500 mt-1 flex items-center gap-2">
+                                                                    <span className="font-mono">{shortId}...</span>
+                                                                    {pos.endDate && <span>• Ends {new Date(pos.endDate).toLocaleDateString()}</span>}
+                                                                </div>
                                                             </div>
                                                         </div>
-                                                    </div>
 
-                                                    {/* Stats Grid */}
-                                                    <div className="grid grid-cols-2 gap-2 bg-gray-50 dark:bg-black/20 p-2 rounded-lg mb-3">
-                                                        <div>
-                                                            <div className="text-[10px] text-gray-500 uppercase font-bold">Outcome</div>
-                                                            <div className={`font-bold ${pos.outcome === 'YES' ? 'text-green-600' : 'text-red-600'}`}>{pos.outcome}</div>
-                                                        </div>
-                                                        <div className="text-right">
-                                                            <div className="text-[10px] text-gray-500 uppercase font-bold">Size</div>
-                                                            <div className="font-mono">{pos.shares.toFixed(2)} Shares</div>
-                                                        </div>
-                                                        <div>
-                                                            <div className="text-[10px] text-gray-500 uppercase font-bold">Entry</div>
-                                                            <div className="font-mono text-gray-700 dark:text-gray-300">${pos.entryPrice.toFixed(2)}</div>
-                                                        </div>
-                                                        <div className="text-right">
-                                                            <div className="text-[10px] text-gray-500 uppercase font-bold">Current</div>
-                                                            <div className={`font-mono font-bold ${(pos.currentPrice || 0) > pos.entryPrice ? 'text-green-500' : 'text-red-500'}`}>
-                                                                ${(pos.currentPrice || pos.entryPrice).toFixed(2)}
+                                                        {/* Stats Grid */}
+                                                        <div className="grid grid-cols-2 gap-2 bg-gray-50 dark:bg-black/20 p-2 rounded-lg mb-3">
+                                                            <div>
+                                                                <div className="text-[10px] text-gray-500 uppercase font-bold">Outcome</div>
+                                                                <div className={`font-bold ${pos.outcome === 'YES' ? 'text-green-600' : 'text-red-600'}`}>{pos.outcome}</div>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <div className="text-[10px] text-gray-500 uppercase font-bold">Size</div>
+                                                                <div className="font-mono">{pos.shares.toFixed(2)} Shares</div>
+                                                            </div>
+                                                            <div>
+                                                                <div className="text-[10px] text-gray-500 uppercase font-bold">Entry</div>
+                                                                <div className="font-mono text-gray-700 dark:text-gray-300">${pos.entryPrice.toFixed(2)}</div>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <div className="text-[10px] text-gray-500 uppercase font-bold">Current</div>
+                                                                <div className={`font-mono font-bold ${(pos.currentPrice || 0) > pos.entryPrice ? 'text-green-500' : 'text-red-500'}`}>
+                                                                    ${(pos.currentPrice || pos.entryPrice).toFixed(2)}
+                                                                </div>
                                                             </div>
                                                         </div>
-                                                    </div>
 
-                                                    {/* Footer: PnL & Action */}
-                                                    <div className="flex items-center justify-between pt-1">
-                                                        <div className={`text-xs font-mono font-bold ${isProfitable ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
-                                                            {isProfitable ? '+' : ''}{pnl.toFixed(2)} ({pnlPercent.toFixed(1)}%)
+                                                        {/* Footer: PnL & Action */}
+                                                        <div className="flex items-center justify-between pt-1">
+                                                            <div className={`text-xs font-mono font-bold ${isProfitable ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
+                                                                {isProfitable ? '+' : ''}{pnl.toFixed(2)} ({pnlPercent.toFixed(1)}%)
+                                                            </div>
+                                                            <button 
+                                                                onClick={() => handleManualExit(pos)}
+                                                                disabled={exitingPositionId === (safeMarketId + pos.outcome)}
+                                                                className="px-3 py-1.5 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 text-[10px] font-bold rounded border border-red-200 dark:border-red-900/30 transition-colors flex items-center gap-1"
+                                                            >
+                                                                {exitingPositionId === (safeMarketId + pos.outcome) ? <Loader2 size={10} className="animate-spin"/> : <X size={10}/>}
+                                                                SELL
+                                                            </button>
                                                         </div>
-                                                        <button 
-                                                            onClick={() => handleManualExit(pos)}
-                                                            disabled={exitingPositionId === (pos.marketId + pos.outcome)}
-                                                            className="px-3 py-1.5 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 text-[10px] font-bold rounded border border-red-200 dark:border-red-900/30 transition-colors flex items-center gap-1"
-                                                        >
-                                                            {exitingPositionId === (pos.marketId + pos.outcome) ? <Loader2 size={10} className="animate-spin"/> : <X size={10}/>}
-                                                            SELL
-                                                        </button>
                                                     </div>
-                                                </div>
-                                            );
-                                        })
-                                    ) : (
-                                        <div className="text-center py-8 text-gray-400 dark:text-gray-600 flex flex-col items-center gap-2">
-                                            <div className="p-3 bg-gray-100 dark:bg-white/5 rounded-full"><ZapIcon size={20} className="opacity-50"/></div>
-                                            <p className="text-xs italic">No active positions.</p>
-                                        </div>
-                                    )}
-                                </div>
+                                                );
+                                            })
+                                        ) : (
+                                            <div className="text-center py-8 text-gray-400 dark:text-gray-600 flex flex-col items-center gap-2">
+                                                <div className="p-3 bg-gray-100 dark:bg-white/5 rounded-full"><ZapIcon size={20} className="opacity-50"/></div>
+                                                <p className="text-xs italic">No active positions.</p>
+                                            </div>
+                                        )}
+                                    </div>
                             ) : (
                                 /* HISTORY TAB */
                                 <div className="space-y-2">

@@ -68,11 +68,10 @@ export class TradeExecutorService {
             const profileUrl = `https://polymarket.com/profile/${signal.trader}`;
             logger.info(`[Sizing] Whale: $${traderBalance.toFixed(0)} | Signal: $${signal.sizeUsd.toFixed(0)} | You: $${effectiveBalance.toFixed(2)} | Target: $${sizing.targetUsdSize.toFixed(2)} (${sizing.reason})`);
             logger.info(`🔗 Trader: ${profileUrl}`);
-            if (sizing.targetUsdSize < 0.50) {
-                if (effectiveBalance < 0.50)
-                    return failResult("skipped_insufficient_balance");
-                if (sizing.targetUsdSize < 0.10)
-                    return failResult("skipped_dust_size");
+            if (sizing.targetUsdSize < 1.00) {
+                if (effectiveBalance < 1.00)
+                    return failResult("skipped_insufficient_balance_min_1");
+                return failResult("skipped_size_too_small");
             }
             if (signal.side === 'BUY' && effectiveBalance < sizing.targetUsdSize) {
                 logger.error(`Insufficient USDC. Need: $${sizing.targetUsdSize.toFixed(2)}, Have: $${effectiveBalance.toFixed(2)}`);
@@ -124,7 +123,7 @@ export class TradeExecutorService {
             }
             // 7. Success - Update Pending Spend
             this.pendingSpend += sizing.targetUsdSize;
-            // Calculate Exact Shares and Amount
+            // Calculate Exact Shares and Amount based on what was filled
             const shares = result.sharesFilled;
             const price = result.priceFilled;
             const actualUsd = shares * price;

@@ -33,7 +33,7 @@ export function computeProportionalSizing(input: CopyInputs): SizingResult {
   // 3. THE "SMART MATCH" LOGIC
   
   // A. The Hard Floor ($1.00)
-  // Polymarket APIs typically reject orders < $1 (Dust). 
+  // Polymarket APIs typically reject orders < $1 (Dust) for Market/FOK orders.
   // If the proportional math says "$0.05", we boost it to "$1.00" so the user actually participates.
   const SYSTEM_MIN_ORDER = 1.00;
   
@@ -43,14 +43,9 @@ export function computeProportionalSizing(input: CopyInputs): SizingResult {
           reason = "floor_boost_min_1";
       } else {
           // User has less than $1.00. 
-          // Can they buy at least 1 share?
-          if (yourUsdBalance > price) {
-              targetUsdSize = yourUsdBalance; // All in (Micro-balance)
-              reason = "all_in_micro";
-          } else {
-              targetUsdSize = 0; // Too poor to buy even 1 share
-              reason = "insufficient_for_1_share";
-          }
+          // They cannot trade on CLOB.
+          targetUsdSize = 0; 
+          reason = "insufficient_for_min_order";
       }
   }
 
@@ -68,9 +63,15 @@ export function computeProportionalSizing(input: CopyInputs): SizingResult {
   }
 
   // 4. Final Formatting
-  // Polymarket requires strict 2-decimal precision for USDC amounts (FOK orders).
+  // Polymarket requires strict 2-decimal precision for USD amounts (FOK orders).
   // We floor to avoid "Insufficient Balance" due to 0.00001 diffs.
   targetUsdSize = Math.floor(targetUsdSize * 100) / 100;
+  
+  // Double check post-floor: if it dropped below $1 but user has funds, bump it back up
+  if (targetUsdSize < SYSTEM_MIN_ORDER && targetUsdSize > 0) {
+       if (yourUsdBalance >= SYSTEM_MIN_ORDER) targetUsdSize = SYSTEM_MIN_ORDER;
+       else targetUsdSize = 0;
+  }
 
   return { targetUsdSize, ratio, reason };
 }

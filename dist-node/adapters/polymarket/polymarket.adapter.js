@@ -342,20 +342,32 @@ export class PolymarketAdapter {
                     rawPrice = Number(book.bids[0].price);
                 }
             }
+            // Price clamp safety
             if (rawPrice >= 0.99)
                 rawPrice = 0.99;
             if (rawPrice <= 0.01)
                 rawPrice = 0.01;
+            // Tick alignment
             const inverseTick = Math.round(1 / tickSize);
             const roundedPrice = Math.floor(rawPrice * inverseTick) / inverseTick;
             let shares = params.sizeShares || 0;
             if (!shares && params.sizeUsd > 0) {
+                // Use ceil to potentially round UP to nearest share count. 
+                // If price is high (0.99), 1/0.99 = 1.01. Floor gives 1 share -> 0.99USD < 1USD min. 
+                // Ceil gives 2 shares -> 1.98USD > 1USD min.
                 const rawShares = params.sizeUsd / roundedPrice;
-                shares = Math.floor(rawShares);
+                shares = Math.ceil(rawShares);
             }
+            // MINIMUM SHARE CHECK (5 Shares)
             if (shares < minOrderSize) {
                 this.logger.warn(`⚠️ Order Rejected: Size (${shares}) < Minimum (${minOrderSize} shares). Req: $${params.sizeUsd.toFixed(2)} @ ${roundedPrice}`);
                 return { success: false, error: "skipped_min_size_limit", sharesFilled: 0, priceFilled: 0 };
+            }
+            // MINIMUM USD AMOUNT CHECK ($1.00 USD hard requirement from CLOB error)
+            const usdValue = shares * roundedPrice;
+            if (usdValue < 1.00) {
+                this.logger.warn(`⚠️ Order Rejected: Value ($${usdValue.toFixed(2)}) < $1.00 Minimum. Req: ${shares} shares @ ${roundedPrice}`);
+                return { success: false, error: "skipped_min_usd_limit", sharesFilled: 0, priceFilled: 0 };
             }
             const order = {
                 tokenID: params.tokenId,
@@ -391,6 +403,10 @@ export class PolymarketAdapter {
                 this.initClobClient(this.config.l2ApiCredentials);
                 return this.createOrder(params, retryCount + 1);
             }
+            // Log full error object for debugging if available
+            if (error.response?.data) {
+                this.logger.error(`[CLOB Client] request error ${JSON.stringify(error.response)}`);
+            }
             const errorMsg = error.response?.data?.error || error.message;
             if (errorMsg?.includes("allowance")) {
                 this.logger.error("❌ Failed: Insufficient Allowance. Retrying approvals...");
@@ -400,7 +416,8 @@ export class PolymarketAdapter {
                 this.logger.error("❌ Failed: Insufficient USDC Balance.");
                 return { success: false, error: "insufficient_funds", sharesFilled: 0, priceFilled: 0 };
             }
-            else if (errorMsg?.includes("minimum")) {
+            else if (errorMsg?.includes("minimum") || errorMsg?.includes("invalid amount")) {
+                // Catch "invalid amount for a marketable BUY order ($0.99), min size: $1"
                 this.logger.error(`❌ Failed: Below Min Size (CLOB Rejection).`);
                 return { success: false, error: "skipped_min_size_limit", sharesFilled: 0, priceFilled: 0 };
             }
