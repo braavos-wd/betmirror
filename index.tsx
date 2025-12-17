@@ -897,7 +897,7 @@ const Landing = ({ onConnect, theme, toggleTheme }: { onConnect: () => void, the
                         </div>
                         <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">3. Passive Alpha</h3>
                         <p className="text-gray-500 text-sm leading-relaxed">
-                            Find the best trader in the Registry and hit Copy. Our Node.js engine monitors signals 24/7 so you can <strong>earn while you sleep</strong>.
+                            Find the best trader in the Registry and hit Copy. Our Node.js engine monitors signals 24/7 so you can <strong>earn while you sleep</strong>. Dont shy away this Christmas.
                         </p>
                     </div>
                 </div>
@@ -944,7 +944,6 @@ const ActivationView = ({
     theme, 
     toggleTheme 
 }: any) => {
-    // ... existing activation view ...
     const [recoveryMode, setRecoveryMode] = useState(false);
     const [computedAddress, setComputedAddress] = useState<string>('');
     const [checking, setChecking] = useState(false);
@@ -2238,7 +2237,7 @@ return (
                                         className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${tradePanelTab === 'active' ? 'bg-gray-900 dark:bg-white text-white dark:text-black shadow-md' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/5'}`}
                                     >
                                         Active Positions 
-                                        <span className="px-1.5 py-0.5 bg-gray-300 text-black dark:bg-grey/10 rounded-full text-[10px] ml-1">{activePositions.length}</span>
+                                        <span className="px-1.5 py-0.5 bg-gray-300 text-black/8 dark:bg-grey/10 rounded-full text-[10px] ml-1">{activePositions.length}</span>
                                     </button>
                                     <button 
                                         onClick={() => setTradePanelTab('history')}
@@ -2991,7 +2990,9 @@ return (
                                 </h3>
                                 <p className="text-sm text-purple-800 dark:text-purple-300 mt-1 max-w-2xl">
                                     Upgrade your Gnosis Safe to a <strong>Multi-Owner Setup</strong>. This adds your Main Wallet as a signer, giving you 
-                                    full on-chain control independent of this platform. If our servers disappear, you can still access funds via Safe{`{Wallet}`}.
+                                    full on-chain control independent of this platform. If our servers get knocked offline, you can still access funds via Safe{`{Wallet}`}.
+                                    By default, the only owner of the Safe is the server-generated EOA.
+                                    Your Main Wallet (MetaMask/Phantom) is linked via the Database (User.address), but it has no on-chain authority over the Safe until you run the multi-sig setup.
                                 </p>
                              </div>
                              
@@ -3427,7 +3428,6 @@ return (
         {activeTab === 'help' && (
             <div className="max-w-5xl mx-auto space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-300 pb-20">
                 
-                {/* Header */}
                 <div className="text-center space-y-4 pt-4">
                     <h2 className="text-4xl font-black text-gray-900 dark:text-white tracking-tight flex items-center justify-center gap-3">
                         <BookOpen className="text-blue-600" size={32}/> 
@@ -3438,7 +3438,6 @@ return (
                     </p>
                 </div>
 
-                {/* 1. ONBOARDING FLOW */}
                 <div className="glass-panel p-8 rounded-2xl border border-gray-200 dark:border-terminal-border relative overflow-hidden">
                     <div className="absolute top-0 right-0 p-6 opacity-5"><Rocket size={150}/></div>
                     <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-8 flex items-center gap-2 relative z-10">
@@ -3464,7 +3463,6 @@ return (
                     </div>
                 </div>
 
-                {/* 2. FUNDING DETAILS (Restored) */}
                 <div className="glass-panel p-8 rounded-2xl border border-gray-200 dark:border-terminal-border relative overflow-hidden group">
                     <div className="absolute -right-10 -top-10 opacity-5 group-hover:opacity-10 transition-opacity"><Globe size={200}/></div>
                     <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-6 flex items-center gap-2 relative z-10">
@@ -3490,7 +3488,6 @@ return (
                     </div>
                 </div>
 
-                {/* 3. CLOB & ARCHITECTURE (Updated for EOA) */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <div className="glass-panel p-8 rounded-2xl border border-gray-200 dark:border-terminal-border bg-blue-50/50 dark:bg-blue-900/5">
                         <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-6 flex items-center gap-2">
@@ -3498,14 +3495,21 @@ return (
                         </h3>
                         <div className="space-y-6 text-sm text-gray-600 dark:text-gray-400">
                             <p className="leading-relaxed">
-                                Bet Mirror uses the <strong>Dedicated Trading Wallet (EOA)</strong> model. Unlike slower Smart Accounts, our engine creates a dedicated, high-speed Ethereum wallet for every user. This ensures 100% compatibility with Polymarket's CLOB signature requirements.
+                                Bet Mirror uses the <strong>Dedicated Gnosis Safe</strong> model. Unlike basic bots that use raw private keys, our engine deploys a Smart Contract Wallet for every user. This allows for **Gasless Trading** via the Polymarket Relayer.
                             </p>
                             <div className="space-y-3">
                                 <div className="flex gap-3">
                                     <CheckCircle2 size={18} className="text-green-500 shrink-0"/>
                                     <div>
+                                        <strong className="text-gray-900 dark:text-white">Gasless Transactions</strong>
+                                        <p className="text-xs mt-1">Trades are routed through the Polymarket Relayer. You do not need to hold POL (Matic) for gas fees on trading actions.</p>
+                                    </div>
+                                </div>
+                                <div className="flex gap-3">
+                                    <CheckCircle2 size={18} className="text-green-500 shrink-0"/>
+                                    <div>
                                         <strong className="text-gray-900 dark:text-white">Builder Attribution</strong>
-                                        <p className="text-xs mt-1">We inject cryptographic headers into every order, identifying your trades as part of the "Bet Mirror" institutional volume. This qualifies for the Polymarket Builder Program.</p>
+                                        <p className="text-xs mt-1">We inject cryptographic headers into every order, identifying your trades as part of the "Bet Mirror" institutional volume.</p>
                                     </div>
                                 </div>
                             </div>
@@ -3528,18 +3532,18 @@ return (
                                 <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
                                     <tr>
                                         <td className="py-3 font-medium text-gray-900 dark:text-white">Wallet Type</td>
-                                        <td className="py-3 text-gray-500">Shared / Custodial</td>
-                                        <td className="py-3 text-gray-500 font-bold">Dedicated EOA per User</td>
+                                        <td className="py-3 text-gray-500">Shared / Custodial EOA</td>
+                                        <td className="py-3 text-gray-500 font-bold">Dedicated Gnosis Safe</td>
                                     </tr>
                                     <tr>
                                         <td className="py-3 font-medium text-gray-900 dark:text-white">Execution</td>
-                                        <td className="py-3 text-gray-500">Manual Click</td>
-                                        <td className="py-3 text-gray-500 font-bold">24/7 Automated</td>
+                                        <td className="py-3 text-gray-500">User Pays Gas</td>
+                                        <td className="py-3 text-gray-500 font-bold">Relayer (Gasless)</td>
                                     </tr>
                                     <tr>
                                         <td className="py-3 font-medium text-gray-900 dark:text-white">Ownership</td>
                                         <td className="py-3 text-gray-500">Platform Owned</td>
-                                        <td className="py-3 text-gray-500 font-bold">User Owned (Withdraw Anytime)</td>
+                                        <td className="py-3 text-gray-500 font-bold">Smart Contract (User Owned)</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -3547,28 +3551,80 @@ return (
                     </div>
                 </div>
             
-                {/* 4. SECURITY & RECOVERY (Restored Deep Dives) */}
-                <div className="glass-panel p-8 rounded-2xl border border-gray-200 dark:border-terminal-border">
+                {/* 1. The Wallet Chain */}
+                <div className="glass-panel p-8 rounded-2xl border border-gray-200 dark:border-terminal-border relative overflow-hidden">
                     <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-6 flex items-center gap-2">
-                        <Lock className="text-orange-500" size={24}/> Security & Recovery
+                        <Key className="text-yellow-500" size={24}/> The 3-Key System
                     </h3>
                     
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-                        <div className="p-5 bg-gray-50 dark:bg-white/5 rounded-xl border border-gray-200 dark:border-white/5">
-                            <h4 className="font-bold text-gray-900 dark:text-white mb-2 text-sm flex items-center gap-2">
-                                <Key size={16} className="text-blue-500"/> 1. The Owner Key (You)
-                            </h4>
+                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
+                        <div className="p-6 bg-white dark:bg-black/20 rounded-xl border border-gray-200 dark:border-white/10">
+                            <div className="w-10 h-10 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center text-blue-600 dark:text-blue-400 mb-4">
+                                <Wallet size={20}/>
+                            </div>
+                            <h4 className="font-bold text-gray-900 dark:text-white mb-2">1. Main Wallet (You)</h4>
                             <p className="text-xs text-gray-500 leading-relaxed">
-                                Held in your browser wallet (MetaMask/Phantom). This key controls access to the Dashboard and initiates withdrawals.
+                                Your MetaMask or Phantom wallet. This is the **Admin**. You use it to log in, deposit funds, and receive profits. We never touch this key.
                             </p>
                         </div>
-                        <div className="p-5 bg-gray-50 dark:bg-white/5 rounded-xl border border-gray-200 dark:border-white/5">
-                            <h4 className="font-bold text-gray-900 dark:text-white mb-2 text-sm flex items-center gap-2">
-                                <Server size={16} className="text-orange-500"/> 2. The Trading Key (Bot)
+                        <div className="p-6 bg-white dark:bg-black/20 rounded-xl border border-gray-200 dark:border-white/10">
+                            <div className="w-10 h-10 bg-purple-100 dark:bg-purple-900/30 rounded-full flex items-center justify-center text-purple-600 dark:text-purple-400 mb-4">
+                                <Server size={20}/>
+                            </div>
+                            <h4 className="font-bold text-gray-900 dark:text-white mb-2 text-sm flex items-center gap-2">2. The Trading Key (Bot)
                             </h4>
                             <p className="text-xs text-gray-500 leading-relaxed">
-                                The server holds an encrypted EOA key for execution. This key is used strictly for signing trades on the Polymarket CLOB. You can request a withdrawal at any time, which moves funds from this Trading Wallet back to your Owner Key.
+                                An encrypted EOA private key. This key acts as the <strong>Operator</strong>. It has permission to sign trades for your Gnosis Safe, but it does not hold the funds itself.
                             </p>
+                        </div>
+                        <div className="p-6 bg-white dark:bg-black/20 rounded-xl border border-gray-200 dark:border-white/10">
+                            <div className="w-10 h-10 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center text-green-600 dark:text-green-500 mb-4">
+                                <Shield size={20}/>
+                            </div>
+                            <h4 className="font-bold text-gray-900 dark:text-white mb-2">3. Safe (Vault)</h4>
+                            <p className="text-xs text-gray-500 leading-relaxed">
+                                A Gnosis Safe Smart Contract on Polygon. This is the **Vault**. Your trading capital sits here. It executes trades only when signed by the Controller.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* 2. Execution Flow */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="glass-panel p-8 rounded-2xl border border-gray-200 dark:border-terminal-border bg-blue-50/50 dark:bg-blue-900/5">
+                        <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-6 flex items-center gap-2">
+                            <Zap className="text-blue-600" size={24}/> Gasless Execution
+                        </h3>
+                        <div className="space-y-4 text-sm text-gray-600 dark:text-gray-400">
+                            <p>
+                                How do we trade without you paying MATIC for every bet?
+                            </p>
+                            <ol className="list-decimal pl-5 space-y-2">
+                                <li>Bot detects a signal and AI approves it.</li>
+                                <li>Signer (Bot) cryptographically signs the order intent.</li>
+                                <li>This signature is sent to the **Polymarket Relayer**.</li>
+                                <li>The Relayer pays the gas fees and submits the transaction to the blockchain.</li>
+                                <li>The Gnosis Safe validates the signature and executes the trade.</li>
+                            </ol>
+                        </div>
+                    </div>
+
+                    <div className="glass-panel p-8 rounded-2xl border border-gray-200 dark:border-terminal-border">
+                        <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-6 flex items-center gap-2">
+                            <LockKeyhole className="text-red-500" size={24}/> Recovery & Sovereignty
+                        </h3>
+                        <div className="space-y-4 text-sm text-gray-600 dark:text-gray-400">
+                            <p>
+                                What if Bet Mirror disappears?
+                            </p>
+                            <ul className="list-disc pl-5 space-y-2">
+                                <li>
+                                    <strong>Withdrawal:</strong> You can trigger a full withdrawal to your Main Wallet at any time via the Dashboard.
+                                </li>
+                                <li>
+                                    <strong>Sovereignty (Advanced):</strong> In the Vault tab, you can add your Main Wallet as a "Co-Owner" of the Safe. This gives you direct, on-chain control of your funds via the Gnosis Safe UI, bypassing our servers entirely.
+                                </li>
+                            </ul>
                         </div>
                     </div>
                 </div>
