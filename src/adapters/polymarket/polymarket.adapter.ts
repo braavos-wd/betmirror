@@ -1,8 +1,9 @@
+
+// ... imports ...
 import { 
     IExchangeAdapter, 
     OrderParams,
-    OrderResult,
-    OrderSide
+    OrderResult
 } from '../interfaces.js';
 import { OrderBook, PositionData } from '../../domain/market.types.js';
 import { TradeSignal, TradeHistoryEntry } from '../../domain/trade.types.js';
@@ -236,27 +237,15 @@ export class PolymarketAdapter implements IExchangeAdapter {
         }
     }
 
-    async getMarketPrice(marketId: string, tokenId: string, side: OrderSide = 'BUY'): Promise<number> {
+    async getMarketPrice(marketId: string, tokenId: string): Promise<number> {
         if (!this.client || !tokenId) return 0;
         try {
-            // FIX: Fully Side-Aware Pricing. 
-            // If selling, we check the Bid (Money in). If buying, we check the Ask (Money out).
-            const book = await this.client.getOrderBook(tokenId);
-            if (side === 'SELL') {
-                if (book.bids && book.bids.length > 0) {
-                    return parseFloat(book.bids[0].price);
-                }
-            } else {
-                if (book.asks && book.asks.length > 0) {
-                    return parseFloat(book.asks[0].price);
-                }
-            }
-            // Fallback only if book is empty
             const mid = await this.client.getMidpoint(tokenId);
             return parseFloat(mid.mid);
         } catch (e) { return 0; }
     }
     
+    // --- UPDATED: POSITION FETCHING WITH RICH DATA ENRICHMENT ---
     async getPositions(address: string): Promise<PositionData[]> {
         this.logger.debug(`Fetching positions for ${address}...`);
 
@@ -275,24 +264,32 @@ export class PolymarketAdapter implements IExchangeAdapter {
         }
 
         // ENRICHMENT LOOP
+        // Use Promise.all to fetch metadata in parallel
         const enrichmentPromises = apiPositions.map(async (p) => {
             try {
+                // FIX: Support both 'market' and 'conditionId' fields from API
                 const marketId = p.market || p.conditionId;
+                
                 let marketData: any = null;
-                // Default to API current price, but we will try to get a better one
                 let currentPrice = Number(p.currentPrice); 
 
+                // Only call CLOB if we have a valid market ID and client
                 if (this.client && marketId && marketId !== 'undefined') {
+                    // A. Fetch Market Metadata (Question, Image, Slug)
                     try {
                         marketData = await this.client.getMarket(marketId);
-                    } catch (err) {}
+                    } catch (err) {
+                        // Suppress 404s for old markets
+                    }
                 }
 
-                // Fetch real-time Bid price for accurate liquidation value
+                // B. Fetch Real-Time CLOB Price if asset ID exists
                 if (this.client && p.asset) {
                     try {
-                        const sidePrice = await this.getMarketPrice(marketId, p.asset, 'SELL');
-                        if (sidePrice > 0) currentPrice = sidePrice;
+                        const mid = await this.client.getMidpoint(p.asset);
+                        if (mid && mid.mid) {
+                            currentPrice = parseFloat(mid.mid);
+                        }
                     } catch (err) {}
                 }
 
@@ -304,15 +301,17 @@ export class PolymarketAdapter implements IExchangeAdapter {
                     outcome: p.outcome || 'UNK',
                     balance: size,
                     valueUsd: size * currentPrice,
-                    entryPrice: Number(p.initialValue) / size,
+                    entryPrice: Number(p.initialValue) / size, // Approx avg entry
                     currentPrice: currentPrice,
+                    // Rich Fields
                     question: marketData?.question || p.title || "Unknown Market",
                     image: marketData?.image || marketData?.icon || "",
                     endDate: marketData?.end_date_iso,
-                    marketSlug: marketData?.market_slug
+                    marketSlug: marketData?.market_slug // Added Slug
                 } as PositionData;
 
             } catch (e) {
+                // If one fails, don't break the whole list
                 return null;
             }
         });
@@ -454,10 +453,11 @@ export class PolymarketAdapter implements IExchangeAdapter {
                  }
             }
 
+            // Price clamp safety
             if (rawPrice >= 0.99) rawPrice = 0.99;
             if (rawPrice <= 0.01) rawPrice = 0.01;
 
-            // TICK ALIGNMENT (CRITICAL)
+            // Tick alignment
             const inverseTick = Math.round(1 / tickSize);
             const roundedPrice = Math.floor(rawPrice * inverseTick) / inverseTick;
             
@@ -465,14 +465,16 @@ export class PolymarketAdapter implements IExchangeAdapter {
             
             if (!shares && params.sizeUsd > 0) {
                  const rawShares = params.sizeUsd / roundedPrice;
-                 shares = Math.ceil(rawShares); 
+                 shares = Math.ceil(rawShares);
             }
 
+            // MINIMUM SHARE CHECK (5 Shares)
             if (shares < minOrderSize) {
                 this.logger.warn(`⚠️ Order Rejected: Size (${shares}) < Minimum (${minOrderSize} shares). Req: $${params.sizeUsd.toFixed(2)} @ ${roundedPrice}`);
                 return { success: false, error: "skipped_min_size_limit", sharesFilled: 0, priceFilled: 0 }; 
             }
             
+            // MINIMUM USD AMOUNT CHECK ($1.00 USD hard requirement from CLOB error)
             const usdValue = shares * roundedPrice;
             if (usdValue < 1.00) {
                 this.logger.warn(`⚠️ Order Rejected: Value ($${usdValue.toFixed(2)}) < $1.00 Minimum. Req: ${shares} shares @ ${roundedPrice}`);
