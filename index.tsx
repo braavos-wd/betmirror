@@ -2144,7 +2144,7 @@ return (
                                         <span className="text-xs text-gray-500 dark:text-gray-400">USDC.e (Active)</span>
                                         <span className="text-[8px] text-green-600 dark:text-green-400 font-bold">TRADING FUNDS</span>
                                     </div>
-                                    <span className="text-sm font-mono text-gray-900 dark:text-white font-bold">{proxyWalletBal.usdc}</span>
+                                    <span className="text-sm font-mono text-gray-900 dark:text-white font-bold">{proxyWalletBal.usdcBridged}</span>
                                 </div>
                             </div>
                         </div>
