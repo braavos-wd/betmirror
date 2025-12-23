@@ -47,20 +47,65 @@ export class TradeExecutorService {
    */
   async executeManualExit(position: ActivePosition, currentPrice: number): Promise<boolean> {
       const { logger, adapter } = this.deps;
+      let remainingShares = position.shares;
+      let totalSold = 0;
+      
       try {
-          logger.info(`📉 Executing Manual Exit: Selling ${position.shares} shares of ${position.tokenId}`);
+          logger.info(`📉 Executing Manual Exit: Selling ${remainingShares} shares of ${position.tokenId}`);
           
+          // Try market sell first (priceLimit: 0)
           const result = await adapter.createOrder({
               marketId: position.marketId,
               tokenId: position.tokenId,
               outcome: position.outcome,
               side: 'SELL',
               sizeUsd: 0, 
-              sizeShares: position.shares, // Sell exact number of shares held
+              sizeShares: remainingShares,
               priceLimit: 0 // Market sell (hit the bid)
           });
           
-          return result.success;
+          if (result.success && result.sharesFilled) {
+              remainingShares -= result.sharesFilled;
+              totalSold += result.sharesFilled;
+              logger.info(`Sold ${result.sharesFilled} shares, ${remainingShares} remaining`);
+          }
+          
+          // If we still have shares to sell, try progressively lower prices
+          if (remainingShares > 0) {
+              logger.warn(`${remainingShares} shares remaining, trying progressive price reduction...`);
+              
+              const priceLevels = [currentPrice * 0.5, currentPrice * 0.25, currentPrice * 0.1, 0.01];
+              
+              for (const price of priceLevels) {
+                  if (price < 0.01 || remainingShares <= 0) continue;
+                  
+                  logger.info(`Trying to sell ${remainingShares} shares at ${price.toFixed(3)}...`);
+                  const fallbackResult = await adapter.createOrder({
+                      marketId: position.marketId,
+                      tokenId: position.tokenId,
+                      outcome: position.outcome,
+                      side: 'SELL',
+                      sizeUsd: 0,
+                      sizeShares: remainingShares,
+                      priceLimit: price
+                  });
+                  
+                  if (fallbackResult.success && fallbackResult.sharesFilled) {
+                      remainingShares -= fallbackResult.sharesFilled;
+                      totalSold += fallbackResult.sharesFilled;
+                      logger.success(`Sold ${fallbackResult.sharesFilled} shares at ${price.toFixed(3)}, ${remainingShares} remaining`);
+                  }
+              }
+          }
+          
+          if (totalSold > 0) {
+              logger.success(`Exit completed: Sold ${totalSold}/${position.shares} shares total`);
+              return true;
+          } else {
+              logger.error(`All exit attempts failed for ${position.tokenId}`);
+              return false;
+          }
+          
       } catch (e) {
           logger.error(`Failed to execute manual exit`, e as Error);
           return false;

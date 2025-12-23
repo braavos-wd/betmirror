@@ -420,14 +420,28 @@ export class PolymarketAdapter implements IExchangeAdapter {
 
             this.logger.info(`Placing Order: ${params.side} ${shares} shares @ ${roundedPrice.toFixed(2)}`);
 
+            // Determine order type based on side and liquidity conditions
+            let orderType = OrderType.FOK;
+            if (side === Side.SELL) {
+                // For sell orders, use IOC to avoid getting killed due to low liquidity
+                orderType = OrderType.IOC;
+            }
+
             const res = await this.client.createAndPostOrder(
                 order, 
                 { negRisk, tickSize: tickSize as any }, 
-                OrderType.FOK as any
+                orderType as any
             );
 
             if (res && res.success) {
                 this.logger.success(`Order Accepted. Tx: ${res.transactionHash || res.orderID || 'OK'}`);
+                
+                // For IOC orders, check if it was partially filled
+                if (orderType === OrderType.IOC && res.filledSize && res.filledSize < shares) {
+                    this.logger.warn(`Partial fill: ${res.filledSize}/${shares} shares sold at ${roundedPrice.toFixed(2)}`);
+                    return { success: true, orderId: res.orderID, txHash: res.transactionHash, sharesFilled: res.filledSize, priceFilled: roundedPrice };
+                }
+                
                 return { success: true, orderId: res.orderID, txHash: res.transactionHash, sharesFilled: shares, priceFilled: roundedPrice };
             }
             throw new Error(res.errorMsg || "Order failed response");
