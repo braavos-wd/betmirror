@@ -1,4 +1,4 @@
-import { Interface, Contract, JsonRpcProvider } from 'ethers';
+import { Interface, Contract, ethers, JsonRpcProvider } from 'ethers';
 import { RelayClient, OperationType } from '@polymarket/builder-relayer-client';
 import { deriveSafe } from '@polymarket/builder-relayer-client/dist/builder/derive.js';
 import { BuilderConfig } from '@polymarket/builder-signing-sdk';
@@ -252,22 +252,6 @@ export class SafeManagerService {
             throw e;
         }
     }
-    async withdrawNative(to, amount) {
-        const tx = {
-            to: to,
-            value: amount,
-            data: "0x",
-            operation: OperationType.Call
-        };
-        try {
-            const task = await this.relayClient.execute([tx]);
-            const result = await task.wait();
-            return result.transactionHash || "0x...";
-        }
-        catch (e) {
-            throw e;
-        }
-    }
     async addOwner(newOwnerAddress) {
         this.logger.info(`🛡️ Adding Recovery Owner: ${newOwnerAddress} to Safe ${this.safeAddress}`);
         const isOwner = await this.viemPublicClient.readContract({
@@ -364,9 +348,10 @@ export class SafeManagerService {
         if (gasBal < 10000000000000000n) { // 0.01 POL
             throw new Error("Signer needs POL (Matic) to execute rescue transaction.");
         }
-        const txHashBytes = await safeContract.getTransactionHash(to, amount, "0x", 0, 0, 0, 0, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", nonce);
+        const amountInWei = ethers.parseEther(amount);
+        const txHashBytes = await safeContract.getTransactionHash(to, amountInWei.toString(), "0x", 0, 0, 0, 0, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", nonce);
         const signature = await this.signer.signMessage(Buffer.from(txHashBytes.slice(2), 'hex'));
-        const tx = await safeContract.execTransaction(to, amount, "0x", 0, 0, 0, 0, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", signature);
+        const tx = await safeContract.execTransaction(to, amountInWei.toString(), "0x", 0, 0, 0, 0, to, amount, "0x", 0, 0, 0, 0, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", signature);
         this.logger.success(`   ✅ Rescue Tx Sent: ${tx.hash}`);
         await tx.wait();
         return tx.hash;

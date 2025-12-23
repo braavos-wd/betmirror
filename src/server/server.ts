@@ -662,7 +662,7 @@ app.post('/api/wallet/withdraw', async (req: any, res: any) => {
              if (balanceToWithdraw > 0n) {
                  const signer = await evmWalletService.getWalletInstance(walletConfig.encryptedPrivateKey);
                  const safeManager = new SafeManagerService(signer, ENV.builderApiKey, ENV.builderApiSecret, ENV.builderApiPassphrase, serverLogger, safeAddr);
-                 if (tokenType === 'POL') { txHash = await safeManager.withdrawNative(toAddress || normId, balanceToWithdraw.toString()); }
+                 if (tokenType === 'POL') { txHash = await safeManager.withdrawNativeOnChain(toAddress || normId, balanceToWithdraw.toString()); }
                  else { txHash = await safeManager.withdrawUSDC(toAddress || normId, balanceToWithdraw.toString()); }
              } else if (eoaBalance > 0n && !targetSafeAddress) {
                  let tokenAddr = TOKENS.USDC_BRIDGED;

@@ -647,7 +647,7 @@ app.post('/api/wallet/withdraw', async (req, res) => {
                 const signer = await evmWalletService.getWalletInstance(walletConfig.encryptedPrivateKey);
                 const safeManager = new SafeManagerService(signer, ENV.builderApiKey, ENV.builderApiSecret, ENV.builderApiPassphrase, serverLogger, safeAddr);
                 if (tokenType === 'POL') {
-                    txHash = await safeManager.withdrawNative(toAddress || normId, balanceToWithdraw.toString());
+                    txHash = await safeManager.withdrawNativeOnChain(toAddress || normId, balanceToWithdraw.toString());
                 }
                 else {
                     txHash = await safeManager.withdrawUSDC(toAddress || normId, balanceToWithdraw.toString());

@@ -284,22 +284,6 @@ export class SafeManagerService {
         }
     }
 
-    public async withdrawNative(to: string, amount: string): Promise<string> {
-        const tx: SafeTransaction = { 
-            to: to as `0x${string}`, 
-            value: amount, 
-            data: "0x", 
-            operation: OperationType.Call 
-        };
-        try {
-            const task = await this.relayClient.execute([tx]);
-            const result = await task.wait();
-            return (result as any).transactionHash || "0x...";
-        } catch (e: any) {
-            throw e;
-        }
-    }
-
     public async addOwner(newOwnerAddress: string): Promise<string> {
         this.logger.info(`🛡️ Adding Recovery Owner: ${newOwnerAddress} to Safe ${this.safeAddress}`);
 
@@ -435,8 +419,9 @@ export class SafeManagerService {
              throw new Error("Signer needs POL (Matic) to execute rescue transaction.");
         }
 
+        const amountInWei = ethers.parseEther(amount);
         const txHashBytes = await safeContract.getTransactionHash(
-            to, amount, "0x", 0, 0, 0, 0,
+            to, amountInWei.toString(), "0x", 0, 0, 0, 0,
             "0x0000000000000000000000000000000000000000",
             "0x0000000000000000000000000000000000000000",
             nonce
@@ -445,6 +430,7 @@ export class SafeManagerService {
         const signature = await this.signer.signMessage(Buffer.from(txHashBytes.slice(2), 'hex'));
         
         const tx = await safeContract.execTransaction(
+            to, amountInWei.toString(), "0x", 0, 0, 0, 0,
             to, amount, "0x", 0, 0, 0, 0,
             "0x0000000000000000000000000000000000000000",
             "0x0000000000000000000000000000000000000000",
