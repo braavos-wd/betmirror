@@ -252,6 +252,25 @@ export class SafeManagerService {
             throw e;
         }
     }
+    /**
+     * Withdraw native token (POL) using the relayer client as per documentation.
+     */
+    async withdrawNative(to, amountInWei) {
+        const tx = {
+            to: to,
+            value: amountInWei, // Amount in wei string
+            data: "0x", // Must be "0x" for native transfers
+            operation: OperationType.Call
+        };
+        try {
+            const task = await this.relayClient.execute([tx]);
+            const result = await task.wait();
+            return result.transactionHash || "0x...";
+        }
+        catch (e) {
+            throw e;
+        }
+    }
     async addOwner(newOwnerAddress) {
         this.logger.info(`🛡️ Adding Recovery Owner: ${newOwnerAddress} to Safe ${this.safeAddress}`);
         const isOwner = await this.viemPublicClient.readContract({
@@ -306,52 +325,59 @@ export class SafeManagerService {
         return this.safeAddress;
     }
     async withdrawUSDCOnChain(to, amount) {
-        const safeAddr = this.safeAddress;
-        this.logger.warn(`🚨 RESCUE MODE: Executing direct on-chain withdrawal from ${safeAddr}...`);
-        if (!this.signer.provider) {
-            throw new Error("Signer has no provider. Cannot execute on-chain.");
-        }
-        const code = await this.signer.provider.getCode(safeAddr);
-        if (code === '0x') {
-            this.logger.warn(`   Safe not deployed on-chain. Deploying now...`);
-            await this.deploySafeOnChain();
-        }
-        const usdcInterface = new Interface(ERC20_ABI);
-        const innerData = usdcInterface.encodeFunctionData("transfer", [to, amount]);
-        const safeContract = new Contract(safeAddr, SAFE_ABI, this.signer);
-        const nonce = await safeContract.nonce();
-        const gasBal = await this.signer.provider.getBalance(this.signer.address);
-        if (gasBal < 10000000000000000n) { // 0.01 POL
-            throw new Error("Signer needs POL (Matic) to execute rescue transaction.");
-        }
-        const txHashBytes = await safeContract.getTransactionHash(TOKENS.USDC_BRIDGED, 0, innerData, 0, 0, 0, 0, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", nonce);
-        const signature = await this.signer.signMessage(Buffer.from(txHashBytes.slice(2), 'hex'));
-        const tx = await safeContract.execTransaction(TOKENS.USDC_BRIDGED, 0, innerData, 0, 0, 0, 0, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", signature);
-        this.logger.success(`   ✅ Rescue Tx Sent: ${tx.hash}`);
-        await tx.wait();
-        return tx.hash;
+        const innerData = new Interface(ERC20_ABI).encodeFunctionData("transfer", [to, amount]);
+        return await this.executeOnChain(TOKENS.USDC_BRIDGED, 0, innerData);
     }
     async withdrawNativeOnChain(to, amount) {
+        const amountInWei = ethers.parseEther(amount);
+        return await this.executeOnChain(to, amountInWei, "0x");
+    }
+    /**
+     * Executes a transaction on-chain via the Safe.
+     * FIX FOR EMPTY DATA: Uses safeInterface.encodeFunctionData to manually construct
+     * the call to execTransaction, ensuring 'data' is never empty in the transaction object.
+     */
+    async executeOnChain(to, value, data) {
         const safeAddr = this.safeAddress;
-        this.logger.warn(`🚨 RESCUE MODE: Executing direct on-chain POL withdrawal from ${safeAddr}...`);
+        this.logger.warn(`🚨 RESCUE MODE: Executing direct on-chain transaction from ${safeAddr}...`);
         if (!this.signer.provider) {
             throw new Error("Signer has no provider. Cannot execute on-chain.");
         }
-        const code = await this.signer.provider.getCode(safeAddr);
-        if (code === '0x') {
-            this.logger.warn(`   Safe not deployed on-chain. Deploying now...`);
-            await this.deploySafeOnChain();
-        }
+        const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+        const safeInterface = new Interface(SAFE_ABI);
         const safeContract = new Contract(safeAddr, SAFE_ABI, this.signer);
         const nonce = await safeContract.nonce();
-        const gasBal = await this.signer.provider.getBalance(this.signer.address);
-        if (gasBal < 10000000000000000n) { // 0.01 POL
-            throw new Error("Signer needs POL (Matic) to execute rescue transaction.");
-        }
-        const amountInWei = ethers.parseEther(amount);
-        const txHashBytes = await safeContract.getTransactionHash(to, amountInWei.toString(), "0x", 0, 0, 0, 0, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", nonce);
-        const signature = await this.signer.signMessage(Buffer.from(txHashBytes.slice(2), 'hex'));
-        const tx = await safeContract.execTransaction(to, amountInWei.toString(), "0x", 0, 0, 0, 0, to, amount, "0x", 0, 0, 0, 0, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", signature);
+        // 1. Get the hash to sign (EIP-712 hash)
+        const txHash = await safeContract.getTransactionHash(to, value, data, 0, 0, 0, 0, ZERO_ADDRESS, ZERO_ADDRESS, nonce);
+        // 2. Sign the RAW hash (unprefixed)
+        const signingKey = new ethers.SigningKey(this.signer.privateKey);
+        const rawSig = signingKey.sign(txHash);
+        /**
+         * 3. Format signature for Gnosis Safe (r + s + v)
+         * ADJUST V: We use standard v (27/28).
+         * Note: If GS026 persist, consider v + 4 (31/32) which is a Gnosis-specific
+         * flag for EOA signatures on EIP-712 hashes.
+         */
+        const vValue = rawSig.v >= 27 ? rawSig.v : rawSig.v + 27;
+        const signature = ethers.concat([
+            rawSig.r,
+            rawSig.s,
+            ethers.toBeHex(vValue, 1)
+        ]);
+        // 4. EXPLICITLY ENCODE execTransaction CALL DATA
+        // This ensures the 'data' field of the Ethers transaction is not empty.
+        const execData = safeInterface.encodeFunctionData("execTransaction", [
+            to, value, data, 0, 0, 0, 0, ZERO_ADDRESS, ZERO_ADDRESS, signature
+        ]);
+        // 5. Execute with manual gas parameters to bypass automated eth_estimateGas
+        const feeData = await this.signer.provider.getFeeData();
+        this.logger.info(`   🚀 Sending Rescue Transaction (Manual Data Encoding)...`);
+        const tx = await this.signer.sendTransaction({
+            to: safeAddr,
+            data: execData,
+            gasLimit: 600000, // Higher limit for Safe exec
+            gasPrice: feeData.gasPrice
+        });
         this.logger.success(`   ✅ Rescue Tx Sent: ${tx.hash}`);
         await tx.wait();
         return tx.hash;

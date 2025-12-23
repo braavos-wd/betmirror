@@ -1,4 +1,3 @@
-
 import express from 'express';
 import cors from 'cors';
 import { fileURLToPath } from 'url';
@@ -159,14 +158,21 @@ app.post('/api/wallet/status', async (req: any, res: any) => {
       } else {
         let safeAddr = user.tradingWallet.safeAddress || null;
         
-        if (user.tradingWallet.address && !safeAddr) {
+        if (user.tradingWallet.address) {
             try {
-                const newSafeAddr = await SafeManagerService.computeAddress(user.tradingWallet.address);
-                safeAddr = newSafeAddr;
-                user.tradingWallet.safeAddress = safeAddr;
-                user.tradingWallet.type = 'GNOSIS_SAFE';
-                await user.save();
-                console.log(`[STATUS CHECK] Repaired missing Safe address: ${safeAddr}`);
+                /**
+                 * DERIVATION GUARD:
+                 * We recalculate the address now to ensure parity with the Polymarket SDK logic.
+                 * If the address in the DB was derived using a different factory, we override it here.
+                 */
+                const correctSafeAddr = await SafeManagerService.computeAddress(user.tradingWallet.address);
+                if (!safeAddr || safeAddr.toLowerCase() !== correctSafeAddr.toLowerCase()) {
+                    safeAddr = correctSafeAddr;
+                    user.tradingWallet.safeAddress = safeAddr;
+                    user.tradingWallet.type = 'GNOSIS_SAFE';
+                    await user.save();
+                    console.log(`[STATUS CHECK] Repaired/Aligned Safe address: ${safeAddr}`);
+                }
             } catch (err) {
                 console.warn("Failed to compute safe address", err);
             }
@@ -204,13 +210,12 @@ app.post('/api/wallet/activate', async (req: any, res: any) => {
         
         if (user && user.tradingWallet && user.tradingWallet.address) {
             console.log(`[ACTIVATION] User ${normId} already has wallet.`);
-            let safeAddr = user.tradingWallet.safeAddress;
-            if (!safeAddr) {
-                 safeAddr = await SafeManagerService.computeAddress(user.tradingWallet.address);
-                 user.tradingWallet.safeAddress = safeAddr;
-                 user.tradingWallet.type = 'GNOSIS_SAFE';
-                 await user.save();
-            }
+            
+            // Force SDK-aligned derivation
+            const safeAddr = await SafeManagerService.computeAddress(user.tradingWallet.address);
+            user.tradingWallet.safeAddress = safeAddr;
+            user.tradingWallet.type = 'GNOSIS_SAFE';
+            await user.save();
 
             res.json({ 
                 success: true, 
@@ -223,6 +228,8 @@ app.post('/api/wallet/activate', async (req: any, res: any) => {
 
         console.log(`[ACTIVATION] Generating NEW keys for ${normId}...`);
         const walletConfig = await evmWalletService.createTradingWallet(normId);
+        
+        // Force SDK-aligned derivation from the start
         const safeAddr = await SafeManagerService.computeAddress(walletConfig.address);
         
         const configToSave: TradingWalletConfig = {
@@ -643,6 +650,7 @@ app.post('/api/deposit/record', async (req: any, res: any) => {
 app.post('/api/wallet/withdraw', async (req: any, res: any) => {
     const { userId, tokenType, toAddress, forceEoa, targetSafeAddress } = req.body;
     const normId = userId.toLowerCase();
+    const isForceEoa = forceEoa === true; // Explicit boolean conversion
     try {
         const user = await User.findOne({ address: normId });
         if (!user || !user.tradingWallet || !user.tradingWallet.encryptedPrivateKey) { res.status(400).json({ error: 'Wallet not configured' }); return; }
@@ -653,32 +661,103 @@ app.post('/api/wallet/withdraw', async (req: any, res: any) => {
         const usdcContract = new ethers.Contract(TOKENS.USDC_BRIDGED, USDC_ABI, provider);
         let safeAddr = targetSafeAddress || walletConfig.safeAddress;
         if (!safeAddr) { safeAddr = await SafeManagerService.computeAddress(walletConfig.address); }
-        if (!forceEoa) {
-             let balanceToWithdraw = 0n;
-             if (tokenType === 'POL') { balanceToWithdraw = await provider.getBalance(safeAddr); }
-             else { try { balanceToWithdraw = await usdcContract.balanceOf(safeAddr); } catch(e) {} }
-             let eoaBalance = 0n;
-             if (!targetSafeAddress) { try { if (tokenType === 'POL') { eoaBalance = await provider.getBalance(walletConfig.address); } else { eoaBalance = await usdcContract.balanceOf(walletConfig.address); } } catch(e) {} }
+        
+        // Calculate balances ONCE - available to both Safe and EOA paths
+        let balanceToWithdraw = 0n;
+        let eoaBalance = 0n;
+        if (tokenType === 'POL') { 
+            balanceToWithdraw = await provider.getBalance(safeAddr); 
+            if (!targetSafeAddress) eoaBalance = await provider.getBalance(walletConfig.address);
+        } else { 
+            try { 
+                balanceToWithdraw = await usdcContract.balanceOf(safeAddr); 
+                if (!targetSafeAddress) eoaBalance = await usdcContract.balanceOf(walletConfig.address);
+            } catch(e) {} 
+        }
+        
+        if (!isForceEoa) {
              if (balanceToWithdraw > 0n) {
                  const signer = await evmWalletService.getWalletInstance(walletConfig.encryptedPrivateKey);
                  const safeManager = new SafeManagerService(signer, ENV.builderApiKey, ENV.builderApiSecret, ENV.builderApiPassphrase, serverLogger, safeAddr);
-                 if (tokenType === 'POL') { txHash = await safeManager.withdrawNativeOnChain(toAddress || normId, balanceToWithdraw.toString()); }
-                 else { txHash = await safeManager.withdrawUSDC(toAddress || normId, balanceToWithdraw.toString()); }
+                 
+                 if (tokenType === 'POL') { 
+                    // Use Safe's on-chain withdrawal to move POL from Safe to user
+                    const reserve = ethers.parseEther("0.05");
+                    if (balanceToWithdraw > reserve) {
+                        const amountStr = ethers.formatEther(balanceToWithdraw - reserve);
+                        txHash = await safeManager.withdrawNativeOnChain(toAddress || normId, amountStr);
+                    } else {
+                        throw new Error("Insufficient POL in Safe to cover gas for withdrawal.");
+                    }
+                } else { 
+                    txHash = await safeManager.withdrawUSDC(toAddress || normId, balanceToWithdraw.toString()); 
+                }
              } else if (eoaBalance > 0n && !targetSafeAddress) {
                  let tokenAddr = TOKENS.USDC_BRIDGED;
                  if (tokenType === 'POL') tokenAddr = TOKENS.POL;
-                 let amountStr: string | undefined = undefined;
+                 let amountStr: string = "";
                  if (tokenType === 'POL') { const reserve = ethers.parseEther("0.05"); if (eoaBalance > reserve) { amountStr = ethers.formatEther(eoaBalance - reserve); } else { throw new Error("Insufficient POL in EOA to cover gas for rescue."); } }
                  txHash = await evmWalletService.withdrawFunds(walletConfig.encryptedPrivateKey, toAddress || normId, tokenAddr, amountStr);
              } else { return res.status(400).json({ error: `Insufficient ${tokenType || 'USDC'} funds.` }); }
-        } else {
+        } else if (isForceEoa) {
             let tokenAddress = TOKENS.USDC_BRIDGED;
-            if (tokenType === 'POL') tokenAddress = TOKENS.POL;
-            txHash = await evmWalletService.withdrawFunds(walletConfig.encryptedPrivateKey, toAddress || normId, tokenAddress);
+            const signer = await evmWalletService.getWalletInstance(walletConfig.encryptedPrivateKey);
+            const safeManager = new SafeManagerService(signer, ENV.builderApiKey, ENV.builderApiSecret, ENV.builderApiPassphrase, serverLogger, safeAddr);
+            
+            if (tokenType === 'POL') {
+                // Use Safe's on-chain withdrawal to move POL from Safe to user
+                const reserve = ethers.parseEther("0.05");
+                if (balanceToWithdraw > reserve) {
+                    const amountStr = ethers.formatEther(balanceToWithdraw - reserve);
+                    txHash = await safeManager.withdrawNativeOnChain(toAddress || normId, amountStr);
+                } else {
+                    throw new Error("Insufficient POL in Safe to cover gas for withdrawal.");
+                }
+            } else {
+                txHash = await safeManager.withdrawUSDC(toAddress || normId, balanceToWithdraw.toString());
+            }
         }
         res.json({ success: true, txHash });
     } catch (e: any) {
-        res.status(500).json({ error: e.message });
+        console.error('=== WITHDRAWAL ERROR DEBUG ===');
+        console.error('Error type:', typeof e);
+        console.error('Error name:', e?.name);
+        console.error('Error message:', e?.message);
+        console.error('Error stack:', e?.stack);
+        console.error('Error details:', JSON.stringify(e, null, 2));
+        console.error('Request body:', { userId, tokenType, toAddress, forceEoa, targetSafeAddress });
+        console.error('=== END DEBUG ===');
+        
+        // User-friendly error messages
+        let userMessage = 'Withdrawal failed. Please try again.';
+        
+        if (e?.code === 'INSUFFICIENT_FUNDS') {
+            userMessage = 'Insufficient funds for withdrawal. Please ensure you have enough POL for gas fees.';
+        } else if (e?.message?.includes('insufficient funds')) {
+            userMessage = 'Insufficient funds for withdrawal. Please ensure you have enough POL for gas fees.';
+        } else if (e?.message?.includes('RelayerError')) {
+            userMessage = 'Withdrawal service temporarily unavailable. Please try again in a few minutes.';
+        } else if (e?.message?.includes('invalid signature')) {
+            userMessage = 'Withdrawal signature validation failed. Please try again.';
+        } else if (e?.message?.includes('nonce too low')) {
+            userMessage = 'Transaction conflict detected. Please try again.';
+        } else if (e?.message?.includes('gas')) {
+            userMessage = 'Gas estimation failed. Please try again.';
+        } else if (e?.message) {
+            userMessage = e?.message;
+        }
+        
+        res.status(500).json({ 
+            error: userMessage,
+            type: e?.name || 'Unknown',
+            details: e?.stack || 'No stack trace available',
+            debug: {
+                originalError: e?.message || 'Unknown error',
+                code: e?.code || null,
+                tokenType,
+                requestTime: new Date().toISOString()
+            }
+        });
     }
 });
 
@@ -739,16 +818,21 @@ app.get('*', (req, res) => {
 async function restoreBots() {
     console.log("🔄 Restoring Active Bots from Database...");
     try {
-        const totalUsers = await User.countDocuments();
-        const dbName = mongoose.connection.name;
-        console.log(`Diagnostic: DB [${dbName}] contains ${totalUsers} users.`);
-
-        const activeUsers = await User.find({ isBotRunning: true, activeBotConfig: { $exists: true } });
-        console.log(`Found ${activeUsers.length} active bots to restore (isBotRunning=true).`);
+        const activeUsers = await User.find({ isBotRunning: true, "tradingWallet.address": { $exists: true } });
+        console.log(`Found ${activeUsers.length} bots to restore.`);
 
         for (const user of activeUsers) {
             if (user.activeBotConfig && user.tradingWallet) {
-                 const lastTrade = await Trade.findOne({ userId: user.address }).sort({ timestamp: -1 });
+                 const normId = user.address.toLowerCase();
+                 // ALIGNMENT CHECK
+                 const correctSafeAddr = await SafeManagerService.computeAddress(user.tradingWallet.address);
+                 if (user.tradingWallet.safeAddress !== correctSafeAddr) {
+                     console.log(`[RESTORE] Aligning mismatched safe for ${normId}`);
+                     user.tradingWallet.safeAddress = correctSafeAddr;
+                     await user.save();
+                 }
+
+                 const lastTrade = await Trade.findOne({ userId: normId }).sort({ timestamp: -1 });
                  const lastTime = lastTrade ? Math.floor(lastTrade.timestamp.getTime() / 1000) + 1 : Math.floor(Date.now() / 1000) - 3600;
 
                  const l2Creds = user.tradingWallet.l2ApiCredentials;
@@ -767,10 +851,10 @@ async function restoreBots() {
                  };
                  
                  try {
-                    await startUserBot(user.address, config);
-                    console.log(`✅ Restored Bot: ${user.address}`);
+                    await startUserBot(normId, config);
+                    console.log(`✅ Restored Bot: ${normId}`);
                  } catch (err: any) {
-                    console.error(`Bot Start Error for ${user.address}: ${err.message}`);
+                    console.error(`Bot Start Error for ${normId}: ${err.message}`);
                  }
             }
         }
@@ -826,16 +910,15 @@ async function seedRegistry() {
 
 // --- BOOTSTRAP ---
 const server = app.listen(Number(PORT), '0.0.0.0', () => {
-    console.log(`🌍 Bet Mirror Cloud Server running on port ${PORT}`);
+    console.log(`🌍 Bet Mirror Server running on port ${PORT}`);
 });
 
 connectDB(ENV.mongoUri)
     .then(async () => {
-        console.log("✅ DB Connected. Initializing background services...");
+        console.log("✅ DB Connected. Syncing system...");
         await seedRegistry(); 
         restoreBots();
     })
     .catch((err) => {
-        console.error("❌ CRITICAL: DB Connection Failed. Server running in degraded mode.");
-        console.error("   Reason: " + err.message);
+        console.error("❌ CRITICAL: DB Connection Failed. " + err.message);
     });

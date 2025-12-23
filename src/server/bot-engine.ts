@@ -13,6 +13,7 @@ import { Logger } from '../utils/logger.util.js';
 import { FeeDistributorService } from '../services/fee-distributor.service.js';
 import { EvmWalletService } from '../services/evm-wallet.service.js';
 import { TOKENS } from '../config/env.js';
+import { registryAnalytics } from '../services/registry-analytics.service.js';
 import crypto from 'crypto';
 
 export interface BotConfig {
@@ -286,6 +287,13 @@ export class BotEngine {
                             status: 'CLOSED',
                             pnl: realizedPnl
                         });
+                        
+                        // Update dashboard analytics immediately
+                        try {
+                            await registryAnalytics.analyzeWallet(this.config.userAddresses[0]);
+                        } catch(e) {
+                            console.warn("Failed to update analytics immediately:", e);
+                        }
                     } catch(e) {
                         console.error("Failed to update trade record", e);
                     }
