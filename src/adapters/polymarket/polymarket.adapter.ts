@@ -423,8 +423,8 @@ export class PolymarketAdapter implements IExchangeAdapter {
             // Determine order type based on side and liquidity conditions
             let orderType = OrderType.FOK;
             if (side === Side.SELL) {
-                // For sell orders, use IOC to avoid getting killed due to low liquidity
-                orderType = OrderType.IOC;
+                // For sell orders, use FAK (Fill-and-Kill) to allow partial fills
+                orderType = OrderType.FAK;
             }
 
             const res = await this.client.createAndPostOrder(
@@ -436,8 +436,8 @@ export class PolymarketAdapter implements IExchangeAdapter {
             if (res && res.success) {
                 this.logger.success(`Order Accepted. Tx: ${res.transactionHash || res.orderID || 'OK'}`);
                 
-                // For IOC orders, check if it was partially filled
-                if (orderType === OrderType.IOC && res.filledSize && res.filledSize < shares) {
+                // For FAK orders, check if it was partially filled
+                if (orderType === OrderType.FAK && res.filledSize && res.filledSize < shares) {
                     this.logger.warn(`Partial fill: ${res.filledSize}/${shares} shares sold at ${roundedPrice.toFixed(2)}`);
                     return { success: true, orderId: res.orderID, txHash: res.transactionHash, sharesFilled: res.filledSize, priceFilled: roundedPrice };
                 }
