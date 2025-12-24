@@ -283,7 +283,7 @@ export class BotEngine {
 
                 // Update user's P/L directly in User collection
                 try {
-                    const { User } = await import('../database/index');
+                    const { User } = await import('../database/index.js');
                     await User.updateOne(
                         { address: this.config.userId },
                         { 
