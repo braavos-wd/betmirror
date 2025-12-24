@@ -454,31 +454,111 @@ export class PolymarketAdapter implements IExchangeAdapter {
 
             this.logger.info(`Placing Order: ${params.side} ${shares} shares @ ${roundedPrice.toFixed(2)}`);
 
-            // Determine order type based on side and liquidity conditions
-            let orderType = OrderType.FOK;
+            // Smart order type selection with fallback strategy
             if (side === Side.SELL) {
-                // For sell orders, use FAK (Fill-and-Kill) to allow partial fills
-                orderType = OrderType.FAK;
-            }
-
-            const res = await this.client.createAndPostOrder(
-                order, 
-                { negRisk, tickSize: tickSize as any }, 
-                orderType as any
-            );
-
-            if (res && res.success) {
-                this.logger.success(`Order Accepted. Tx: ${res.transactionHash || res.orderID || 'OK'}`);
+                // Get order book to check liquidity and get market parameters
+                const book = await this.client.getOrderBook(params.tokenId);
+                const bestBid = book.bids.length > 0 ? Number(book.bids[0].price) : null;
+                const bidLiquidity = book.bids.reduce((sum, b) => sum + Number(b.size), 0);
+                const tickSize = parseFloat(book.tick_size) || 0.01;
+                const minOrderSize = parseFloat(book.min_order_size) || 5;
                 
-                // For FAK orders, check if it was partially filled
-                if (orderType === OrderType.FAK && res.filledSize && res.filledSize < shares) {
-                    this.logger.warn(`Partial fill: ${res.filledSize}/${shares} shares sold at ${roundedPrice.toFixed(2)}`);
-                    return { success: true, orderId: res.orderID, txHash: res.transactionHash, sharesFilled: res.filledSize, priceFilled: roundedPrice };
+                this.logger.info(`Best bid: ${bestBid}, Bid liquidity: ${bidLiquidity} shares, Tick: ${tickSize}, Min: ${minOrderSize}`);
+
+                // Apply proper rounding for sell orders
+                const inverseTick = Math.round(1 / tickSize);
+                const sellRoundedPrice = Math.floor(roundedPrice * inverseTick) / inverseTick; // Round DOWN for sells
+                
+                // Clamp price to valid range
+                const finalPrice = sellRoundedPrice > 0.99 ? 0.99 : sellRoundedPrice < 0.01 ? 0.01 : sellRoundedPrice;
+                
+                // Round shares to avoid decimal precision issues (1e6 precision)
+                const roundedShares = Math.floor(shares * 1e6) / 1e6;
+                
+                // Validate minimum size
+                if (roundedShares < minOrderSize) {
+                    this.logger.warn(`Order size ${roundedShares} below minimum ${minOrderSize}`);
+                    return { success: false, error: `Order size ${roundedShares} below minimum ${minOrderSize}`, sharesFilled: 0, priceFilled: 0 };
+                }
+
+                let remainingShares = roundedShares;
+
+                // Strategy 1: Try FAK at best bid if liquidity exists
+                if (bestBid && bidLiquidity > 0) {
+                    try {
+                        // Apply tick size rounding to best bid as well
+                        const fakPrice = Math.floor(bestBid * inverseTick) / inverseTick;
+                        
+                        // Use createAndPostMarketOrder for FAK (immediate fill)
+                        const fakResult = await this.client.createAndPostMarketOrder(
+                            {
+                                tokenID: params.tokenId,
+                                amount: Math.floor(roundedShares * 1e6), // Amount in 1e6 precision
+                                side: Side.SELL,
+                                price: fakPrice, // Price limit
+                            },
+                            { negRisk, tickSize: tickSize as any },
+                            OrderType.FAK // FAK for partial fills
+                        );
+
+                        if (fakResult && fakResult.success) {
+                            const filled = parseFloat(fakResult.takingAmount) / 1e6 || 0;
+                            this.logger.success(`FAK filled ${filled}/${roundedShares} shares at ${fakPrice}`);
+                            
+                            if (filled >= roundedShares) {
+                                return { success: true, orderId: fakResult.orderID, txHash: fakResult.transactionHash, sharesFilled: filled, priceFilled: fakPrice };
+                            }
+                            
+                            // Partial fill - update remaining shares for GTC
+                            remainingShares = roundedShares - filled;
+                        }
+                    } catch (e) {
+                        const errorMessage = e instanceof Error ? e.message : String(e);
+                        this.logger.warn(`FAK failed: ${errorMessage}`);
+                    }
+                }
+
+                // Strategy 2: Place GTC limit order for remaining shares
+                try {
+                    const gtcPrice = bestBid ? Math.floor(bestBid * inverseTick) / inverseTick : finalPrice;
+                    const gtcResult = await this.client.createAndPostOrder(
+                        { 
+                            tokenID: params.tokenId, 
+                            price: gtcPrice, 
+                            side: Side.SELL, 
+                            size: Math.floor(remainingShares * 1e6) // Size in 1e6 precision
+                        },
+                        { negRisk, tickSize: tickSize as any },
+                        OrderType.GTC
+                    );
+
+                    if (gtcResult && gtcResult.success) {
+                        this.logger.success(`GTC placed: ${gtcResult.orderID} for ${remainingShares} @ ${gtcPrice}`);
+                        const filledShares = roundedShares - remainingShares; // Amount already filled by FAK
+                        return { success: true, orderId: gtcResult.orderID, txHash: gtcResult.transactionHash, sharesFilled: filledShares, priceFilled: gtcPrice };
+                    }
+                } catch (e) {
+                    const errorMessage = e instanceof Error ? e.message : String(e);
+                    this.logger.error(`GTC failed: ${errorMessage}`);
+                    return { success: false, error: errorMessage, sharesFilled: 0, priceFilled: 0 };
                 }
                 
-                return { success: true, orderId: res.orderID, txHash: res.transactionHash, sharesFilled: shares, priceFilled: roundedPrice };
+                // Final fallback if all strategies fail
+                return { success: false, error: "All sell strategies failed", sharesFilled: 0, priceFilled: 0 };
+            } else {
+                // Buy orders use GTC (updated from FOK)
+                const res = await this.client.createAndPostOrder(
+                    order, 
+                    { negRisk, tickSize: tickSize as any }, 
+                    OrderType.GTC
+                );
+
+                if (res && res.success) {
+                    this.logger.success(`Order Accepted. Tx: ${res.transactionHash || res.orderID || 'OK'}`);
+                    return { success: true, orderId: res.orderID, txHash: res.transactionHash, sharesFilled: shares, priceFilled: roundedPrice };
+                }
+                throw new Error(res.errorMsg || "Order failed response");
             }
-            throw new Error(res.errorMsg || "Order failed response");
 
         } catch (error: any) {
             if (retryCount < 1 && (String(error).includes("401") || String(error).includes("signature"))) {
@@ -496,6 +576,25 @@ export class PolymarketAdapter implements IExchangeAdapter {
             await this.client.cancelOrder({ orderID: orderId });
             return true;
         } catch (e) { return false; }
+    }
+
+    async getOpenOrders(): Promise<any[]> {
+        // Note: ClobClient doesn't have getOrders() method
+        // This would need to be implemented via REST API or stored locally
+        this.logger.warn('getOpenOrders() not implemented - ClobClient lacks getOrders method');
+        return [];
+    }
+
+    async getOrderStatus(orderId: string): Promise<any | null> {
+        if (!this.client) return null;
+        try {
+            // Use individual order lookup if available
+            const order = await this.client.getOrder(orderId);
+            return order;
+        } catch (e) {
+            this.logger.debug(`Failed to get order status: ${e instanceof Error ? e.message : String(e)}`);
+            return null;
+        }
     }
 
     async cashout(amount: number, destination: string): Promise<string> {

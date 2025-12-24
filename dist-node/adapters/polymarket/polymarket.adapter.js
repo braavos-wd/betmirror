@@ -153,6 +153,50 @@ export class PolymarketAdapter {
             neg_risk: book.neg_risk
         };
     }
+    async fetchMarketSlugs(marketId) {
+        let marketSlug = "";
+        let eventSlug = "";
+        let question = marketId;
+        let image = "";
+        // CLOB API for market data - force fresh fetch
+        if (this.client && marketId) {
+            try {
+                // Clear cache to force fresh data
+                this.marketMetadataCache.delete(marketId);
+                const marketData = await this.client.getMarket(marketId);
+                this.marketMetadataCache.set(marketId, marketData);
+                if (marketData) {
+                    marketSlug = marketData.market_slug || "";
+                    question = marketData.question || question;
+                    image = marketData.image || image;
+                }
+            }
+            catch (e) {
+                this.logger.debug(`CLOB API fetch failed for ${marketId}`);
+            }
+        }
+        // Gamma API for event slug - use slug endpoint for accurate results
+        if (marketSlug) {
+            try {
+                const gammaUrl = `https://gamma-api.polymarket.com/markets/slug/${marketSlug}`;
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
+                const gammaResponse = await fetch(gammaUrl, { signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (gammaResponse.ok) {
+                    const marketData = await gammaResponse.json();
+                    // The event slug should be in the events array
+                    if (marketData.events && marketData.events.length > 0) {
+                        eventSlug = marketData.events[0]?.slug || "";
+                    }
+                }
+            }
+            catch (e) {
+                this.logger.debug(`Gamma API fetch failed for slug ${marketSlug}`);
+            }
+        }
+        return { marketSlug, eventSlug, question, image };
+    }
     async getPositions(address) {
         try {
             const url = `https://data-api.polymarket.com/positions?user=${address}`;
@@ -181,28 +225,8 @@ export class PolymarketAdapter {
                 const investedValueUsd = size * entryPrice;
                 const unrealizedPnL = currentValueUsd - investedValueUsd;
                 const unrealizedPnLPercent = investedValueUsd > 0 ? (unrealizedPnL / investedValueUsd) * 100 : 0;
-                let marketSlug = "";
-                let eventSlug = "";
-                let question = p.title || marketId;
-                let image = p.icon || "";
-                if (this.client && marketId) {
-                    try {
-                        let marketData = this.marketMetadataCache.get(marketId);
-                        if (!marketData) {
-                            marketData = await this.client.getMarket(marketId);
-                            this.marketMetadataCache.set(marketId, marketData);
-                        }
-                        if (marketData) {
-                            marketSlug = marketData.market_slug || "";
-                            eventSlug = marketData.event_slug || "";
-                            question = marketData.question || question;
-                            image = marketData.image || image;
-                        }
-                    }
-                    catch (e) {
-                        this.logger.debug(`Metadata fetch failed for ${marketId}`);
-                    }
-                }
+                // Reusable slug fetching
+                const { marketSlug, eventSlug, question, image } = await this.fetchMarketSlugs(marketId);
                 positions.push({
                     marketId: marketId,
                     tokenId: tokenId,
@@ -224,6 +248,7 @@ export class PolymarketAdapter {
             return positions;
         }
         catch (e) {
+            this.logger.error("Failed to fetch positions", e);
             return [];
         }
     }
@@ -347,12 +372,62 @@ export class PolymarketAdapter {
                 taker: "0x0000000000000000000000000000000000000000"
             };
             this.logger.info(`Placing Order: ${params.side} ${shares} shares @ ${roundedPrice.toFixed(2)}`);
-            const res = await this.client.createAndPostOrder(order, { negRisk, tickSize: tickSize }, OrderType.FOK);
-            if (res && res.success) {
-                this.logger.success(`Order Accepted. Tx: ${res.transactionHash || res.orderID || 'OK'}`);
-                return { success: true, orderId: res.orderID, txHash: res.transactionHash, sharesFilled: shares, priceFilled: roundedPrice };
+            // Smart order type selection with fallback strategy
+            if (side === Side.SELL) {
+                // Get order book to check liquidity
+                const book = await this.client.getOrderBook(params.tokenId);
+                const bestBid = book.bids.length > 0 ? Number(book.bids[0].price) : null;
+                const bidLiquidity = book.bids.reduce((sum, b) => sum + Number(b.size), 0);
+                this.logger.info(`Best bid: ${bestBid}, Bid liquidity: ${bidLiquidity} shares`);
+                // Strategy 1: Try FAK at best bid if liquidity exists
+                if (bestBid && bidLiquidity > 0 && bestBid >= roundedPrice) {
+                    try {
+                        const fakOrder = { ...order, price: bestBid };
+                        const fakResult = await this.client.createAndPostOrder(fakOrder, { negRisk, tickSize: tickSize }, OrderType.FAK);
+                        if (fakResult && fakResult.success) {
+                            const filled = fakResult.filledSize || 0;
+                            this.logger.success(`FAK filled ${filled}/${shares} shares at ${bestBid}`);
+                            if (filled >= shares) {
+                                return { success: true, orderId: fakResult.orderID, txHash: fakResult.transactionHash, sharesFilled: filled, priceFilled: bestBid };
+                            }
+                            // Partial fill - place GTC for remaining shares
+                            if (filled < shares) {
+                                const remainingShares = shares - filled;
+                                const gtcOrder = { ...order, size: remainingShares };
+                                const gtcResult = await this.client.createAndPostOrder(gtcOrder, { negRisk, tickSize: tickSize }, OrderType.GTC);
+                                if (gtcResult && gtcResult.success) {
+                                    this.logger.success(`GTC placed for ${remainingShares} remaining shares @ ${roundedPrice}`);
+                                    return { success: true, orderId: gtcResult.orderID, txHash: gtcResult.transactionHash, sharesFilled: filled, priceFilled: bestBid };
+                                }
+                            }
+                        }
+                    }
+                    catch (e) {
+                        this.logger.warn(`FAK failed: ${e.message}`);
+                    }
+                }
+                // Strategy 2: Place GTC order (fallback for no liquidity or failed FAK)
+                try {
+                    const gtcResult = await this.client.createAndPostOrder(order, { negRisk, tickSize: tickSize }, OrderType.GTC);
+                    if (gtcResult && gtcResult.success) {
+                        this.logger.success(`GTC order placed: ${gtcResult.orderID} for ${shares} @ ${roundedPrice}`);
+                        return { success: true, orderId: gtcResult.orderID, txHash: gtcResult.transactionHash, sharesFilled: 0, priceFilled: roundedPrice };
+                    }
+                }
+                catch (e) {
+                    this.logger.error(`GTC failed: ${e.message}`);
+                    throw e;
+                }
             }
-            throw new Error(res.errorMsg || "Order failed response");
+            else {
+                // Buy orders use FOK (existing logic)
+                const res = await this.client.createAndPostOrder(order, { negRisk, tickSize: tickSize }, OrderType.FOK);
+                if (res && res.success) {
+                    this.logger.success(`Order Accepted. Tx: ${res.transactionHash || res.orderID || 'OK'}`);
+                    return { success: true, orderId: res.orderID, txHash: res.transactionHash, sharesFilled: shares, priceFilled: roundedPrice };
+                }
+                throw new Error(res.errorMsg || "Order failed response");
+            }
         }
         catch (error) {
             if (retryCount < 1 && (String(error).includes("401") || String(error).includes("signature"))) {

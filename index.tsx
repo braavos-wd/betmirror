@@ -737,7 +737,7 @@ const Landing = ({ onConnect, theme, toggleTheme }: { onConnect: () => void, the
 
                 <div className="mb-6 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100">
                     <span className="px-4 py-1.5 rounded-full bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/50 text-blue-600 dark:text-blue-400 text-[10px] font-bold uppercase tracking-widest">
-                        Polymarket Trading Live Soon
+                        Polymarket Trading Live
                     </span>
                 </div>
 

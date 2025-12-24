@@ -24,7 +24,7 @@ export class TradeMonitorService {
         this.isPolling = true;
         this.deps.logger.info(`🔌 Starting High-Frequency Polling (Data API)...`);
         await this.poll();
-        this.pollInterval = setInterval(() => this.poll(), 2000);
+        this.pollInterval = setInterval(() => this.poll(), 10000); // 10 seconds 
     }
     stop() {
         this.isPolling = false;

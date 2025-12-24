@@ -540,8 +540,8 @@ app.get('/api/bot/status/:userId', async (req: any, res: any) => {
         // CLARIFICATION: This logs the payload for the current USER VIEWING THE DASHBOARD (normId),
         // but the positions themselves are fetched for the SAFE associated with that user.
         if (livePositions.length > 0) {
-            //console.log(`\n📦 [DEBUG] Raw Positions Payload for User ${normId.slice(0, 6)}... (Safe: ${user?.tradingWallet?.safeAddress?.slice(0,6) || 'Unknown'}) :`);
-            //console.dir(livePositions, { depth: null, colors: true });
+            console.log(`\n📦 [DEBUG] Raw Positions Payload for User ${normId.slice(0, 6)}... (Safe: ${user?.tradingWallet?.safeAddress?.slice(0,6) || 'Unknown'}) :`);
+            console.dir(livePositions, { depth: null, colors: true });
         }
         // -------------------------------
 

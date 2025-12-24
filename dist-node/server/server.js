@@ -60,7 +60,7 @@ async function startUserBot(userId, config) {
                 const user = await User.findOne({ address: normId });
                 if (user) {
                     const stats = user.stats || { totalVolume: 0, tradesCount: 0, totalPnl: 0 };
-                    stats.totalVolume = (stats.totalVolume || 0) + (trade.executedSize || trade.size || 0);
+                    stats.totalVolume = (stats.totalVolume || 0) + (trade.executedSize || 0);
                     stats.tradesCount = (stats.tradesCount || 0) + 1;
                     if (trade.pnl !== undefined) {
                         stats.totalPnl = (stats.totalPnl || 0) + trade.pnl;
