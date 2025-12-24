@@ -465,143 +465,6 @@ const WithdrawalModal = ({
     );
 };
 
-const OrderManagementModal = ({ 
-    isOpen, 
-    onClose, 
-    position, 
-    orders,
-    onCancelOrder,
-    onRedeemWinnings
-}: { 
-    isOpen: boolean; 
-    onClose: () => void; 
-    position: ActivePosition | null;
-    orders: any[];
-    onCancelOrder: (orderId: string) => void;
-    onRedeemWinnings: (position: ActivePosition) => void;
-}) => {
-    if (!isOpen || !position) return null;
-
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="bg-white dark:bg-terminal-card border border-gray-200 dark:border-terminal-border rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col relative shadow-2xl overflow-hidden">
-                {/* Header */}
-                <div className="p-6 border-b border-gray-200 dark:border-gray-800 flex justify-between items-start bg-gray-50 dark:bg-black/20">
-                    <div className="flex gap-4">
-                        <div className="w-12 h-12 rounded-xl bg-blue-100 dark:bg-blue-900/20 flex items-center justify-center">
-                            <Activity size={20} className="text-blue-600 dark:text-blue-400"/>
-                        </div>
-                        <div>
-                            <h2 className="text-xl font-bold text-gray-900 dark:text-white">Order Management</h2>
-                            <p className="text-sm text-gray-500 mt-1">
-                                {position.question || `Market: ${position.marketId}`}
-                            </p>
-                            <div className="flex items-center gap-2 mt-2">
-                                <span className={`px-2 py-1 text-xs font-bold rounded ${position.outcome === 'YES' ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'}`}>
-                                    {position.outcome}
-                                </span>
-                                <span className="text-xs text-gray-500">
-                                    {position.shares.toFixed(2)} shares @ ${position.entryPrice.toFixed(2)}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                    <button 
-                        onClick={onClose}
-                        className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
-                    >
-                        <X size={20}/>
-                    </button>
-                </div>
-
-                {/* Content */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {/* Open Orders Section */}
-                    <div>
-                        <h3 className="font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-                            <Activity size={16} className="text-blue-500"/>
-                            Open Orders ({orders.length})
-                        </h3>
-                        {orders.length > 0 ? (
-                            <div className="space-y-3">
-                                {orders.map((order) => (
-                                    <div key={order.orderID} className="bg-gray-50 dark:bg-white/5 rounded-lg p-4 border border-gray-200 dark:border-white/10">
-                                        <div className="flex justify-between items-start">
-                                            <div className="flex-1">
-                                                <div className="flex items-center gap-2 mb-2">
-                                                    <span className={`px-2 py-1 text-xs font-bold rounded ${order.side === 'BUY' ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'}`}>
-                                                        {order.side}
-                                                    </span>
-                                                    <span className="text-xs text-gray-500">
-                                                        ID: {order.orderID.slice(0, 10)}...
-                                                    </span>
-                                                </div>
-                                                <div className="grid grid-cols-2 gap-4 text-sm">
-                                                    <div>
-                                                        <span className="text-gray-500">Price:</span>
-                                                        <span className="ml-2 font-mono font-bold">${order.price.toFixed(2)}</span>
-                                                    </div>
-                                                    <div>
-                                                        <span className="text-gray-500">Size:</span>
-                                                        <span className="ml-2 font-mono font-bold">{order.size}</span>
-                                                    </div>
-                                                    <div>
-                                                        <span className="text-gray-500">Filled:</span>
-                                                        <span className="ml-2 font-mono font-bold">{order.filled || 0}</span>
-                                                    </div>
-                                                    <div>
-                                                        <span className="text-gray-500">Remaining:</span>
-                                                        <span className="ml-2 font-mono font-bold">{(order.size - (order.filled || 0)).toFixed(2)}</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div className="ml-4">
-                                                <button 
-                                                    onClick={() => onCancelOrder(order.orderID)}
-                                                    className="px-3 py-2 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 text-sm font-bold rounded-lg border border-red-200 dark:border-red-900/30 transition-colors"
-                                                >
-                                                    Cancel
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <div className="text-center py-8 text-gray-400 dark:text-gray-600">
-                                <div className="w-16 h-16 bg-gray-100 dark:bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
-                                    <Activity size={24} className="opacity-50"/>
-                                </div>
-                                <p className="text-sm">No open orders for this position</p>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Redemption Section (for resolved markets) */}
-                    <div className="border-t border-gray-200 dark:border-white/10 pt-6">
-                        <h4 className="font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-                            <Trophy size={16} className="text-yellow-500"/>
-                            Market Resolution
-                        </h4>
-                        <div className="bg-yellow-50 dark:bg-yellow-900/10 rounded-lg p-4 border border-yellow-200 dark:border-yellow-900/30">
-                            <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
-                                If this market has resolved in your favor, you can redeem your winnings here.
-                            </p>
-                            <button 
-                                onClick={() => onRedeemWinnings(position)}
-                                className="w-full px-4 py-3 bg-yellow-500 hover:bg-yellow-600 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
-                            >
-                                <Trophy size={16}/>
-                                Redeem Winnings
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-};
-
 const TraderDetailsModal = ({ trader, onClose }: { trader: TraderProfile, onClose: () => void }) => {
     const [trades, setTrades] = useState<PolyTrade[]>([]);
     const [loading, setLoading] = useState(true);
@@ -1224,11 +1087,6 @@ const [newWalletInput, setNewWalletInput] = useState('');
 const [showSecrets, setShowSecrets] = useState(false);
 const [isAddingWallet, setIsAddingWallet] = useState(false);
 const [selectedTrader, setSelectedTrader] = useState<TraderProfile | null>(null);
-
-// --- ORDER MANAGEMENT STATE ---
-const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
-const [selectedPosition, setSelectedPosition] = useState<ActivePosition | null>(null);
-const [openOrders, setOpenOrders] = useState<any[]>([]);
 const [exitingPositionId, setExitingPositionId] = useState<string | null>(null); // Track manual exit loading state
 const [isSyncingPositions, setIsSyncingPositions] = useState(false); //  Sync positions state
 
@@ -1967,74 +1825,6 @@ const handleSyncPositions = async () => {
     }
 };
 
-// --- ORDER MANAGEMENT HANDLERS ---
-const handleOpenOrderModal = async (position: ActivePosition) => {
-    setSelectedPosition(position);
-    setIsOrderModalOpen(true);
-    
-    // Fetch open orders for this position
-    try {
-        const res = await axios.get(`/api/orders/open?userId=${userAddress}`);
-        const positionOrders = res.data.orders?.filter((order: any) => 
-            order.tokenId === position.tokenId
-        ) || [];
-        setOpenOrders(positionOrders);
-    } catch (e: any) {
-        console.error('Failed to fetch open orders:', e);
-        setOpenOrders([]);
-    }
-};
-
-const handleCloseOrderModal = () => {
-    setIsOrderModalOpen(false);
-    setSelectedPosition(null);
-    setOpenOrders([]);
-};
-
-const handleCancelOrder = async (orderId: string) => {
-    if (!confirm('Are you sure you want to cancel this order?')) return;
-    
-    try {
-        const res = await axios.post('/api/orders/cancel', { 
-            userId: userAddress,
-            orderId 
-        });
-        if (res.data.success) {
-            // Refresh open orders
-            if (selectedPosition) {
-                handleOpenOrderModal(selectedPosition);
-            }
-            alert('✅ Order cancelled successfully!');
-        } else {
-            alert('Failed to cancel order: ' + res.data.error);
-        }
-    } catch (e: any) {
-        alert('Error cancelling order: ' + (e.response?.data?.error || e.message));
-    }
-};
-
-const handleRedeemWinnings = async (position: ActivePosition) => {
-    if (!confirm('Redeem your winnings from this resolved market?')) return;
-    
-    try {
-        const res = await axios.post('/api/redeem', {
-            userId: userAddress,
-            marketId: position.marketId,
-            outcome: position.outcome
-        });
-        
-        if (res.data.success) {
-            alert('🏆 Winnings redeemed successfully!');
-            // Refresh positions
-            handleSyncPositions();
-        } else {
-            alert('Failed to redeem: ' + res.data.error);
-        }
-    } catch (e: any) {
-        alert('Error redeeming: ' + (e.response?.data?.error || e.message));
-    }
-};
-
 const addTarget = () => {
     if (!targetInput.startsWith('0x')) return alert("Invalid Address");
     if (!config.targets.includes(targetInput)) {
@@ -2563,25 +2353,14 @@ return (
                                                             <div className={`text-xs font-mono font-bold ${isProfitable ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
                                                                 {isProfitable ? '+' : ''}{pnl.toFixed(2)} ({pnlPercent.toFixed(1)}%)
                                                             </div>
-                                                            <div className="flex items-center gap-1">
-                                                                {/* Order Status Indicator */}
-                                                                <button 
-                                                                    onClick={() => handleOpenOrderModal(pos)}
-                                                                    className="px-2 py-1.5 bg-blue-50 dark:bg-blue-900/10 hover:bg-blue-100 dark:hover:bg-blue-900/20 text-blue-600 dark:text-blue-400 text-[10px] font-bold rounded border border-blue-200 dark:border-blue-900/30 transition-colors flex items-center gap-1"
-                                                                    title="Manage Orders & Redeem"
-                                                                >
-                                                                    <Activity size={10}/>
-                                                                    ORDERS
-                                                                </button>
-                                                                <button 
-                                                                    onClick={() => handleManualExit(pos)}
-                                                                    disabled={exitingPositionId === (safeMarketId + pos.outcome)}
-                                                                    className="px-3 py-1.5 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 text-[10px] font-bold rounded border border-red-200 dark:border-red-900/30 transition-colors flex items-center gap-1"
-                                                                >
-                                                                    {exitingPositionId === (safeMarketId + pos.outcome) ? <Loader2 size={10} className="animate-spin"/> : <X size={10}/>}
-                                                                    SELL
-                                                                </button>
-                                                            </div>
+                                                            <button 
+                                                                onClick={() => handleManualExit(pos)}
+                                                                disabled={exitingPositionId === (safeMarketId + pos.outcome)}
+                                                                className="px-3 py-1.5 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 text-[10px] font-bold rounded border border-red-200 dark:border-red-900/30 transition-colors flex items-center gap-1"
+                                                            >
+                                                                {exitingPositionId === (safeMarketId + pos.outcome) ? <Loader2 size={10} className="animate-spin"/> : <X size={10}/>}
+                                                                SELL
+                                                            </button>
                                                         </div>
                                                     </div>
                                                 );
@@ -3951,16 +3730,6 @@ return (
         onWithdraw={handleWithdraw}
         isWithdrawing={isWithdrawing}
         successTx={withdrawalTxHash}
-    />
-
-    {/* Order Management Modal */}
-    <OrderManagementModal
-        isOpen={isOrderModalOpen}
-        onClose={handleCloseOrderModal}
-        position={selectedPosition}
-        orders={openOrders}
-        onCancelOrder={handleCancelOrder}
-        onRedeemWinnings={handleRedeemWinnings}
     />
 
     </div>

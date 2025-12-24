@@ -9,6 +9,8 @@ export interface UserStats {
   totalFeesPaid: number;
   winRate: number;
   tradesCount: number;
+  winCount: number;
+  lossCount: number;
   allowanceApproved: boolean;
   portfolioValue: number;
   cashBalance: number;

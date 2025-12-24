@@ -62,8 +62,10 @@ export class BotEngine {
         totalFeesPaid: 0, 
         winRate: 0, 
         tradesCount: 0, 
-        allowanceApproved: false, 
-        portfolioValue: 0, 
+        winCount: 0, 
+        lossCount: 0, 
+        allowanceApproved: false,
+        portfolioValue: 0,
         cashBalance: 0
     };
 
@@ -77,6 +79,11 @@ export class BotEngine {
     ) {
         if (config.activePositions) this.activePositions = config.activePositions;
         if (config.stats) this.stats = config.stats;
+    }
+
+    // Public getter for adapter access
+    public getAdapter(): PolymarketAdapter | undefined {
+        return this.exchange;
     }
 
     private async addLog(type: 'info' | 'warn' | 'error' | 'success', message: string) {

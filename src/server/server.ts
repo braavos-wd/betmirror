@@ -805,6 +805,74 @@ app.post('/api/trade/exit', async (req: any, res: any) => {
     }
 });
 
+// --- ORDER MANAGEMENT ENDPOINTS ---
+app.get('/api/orders/open', async (req: any, res: any) => {
+    const { userId } = req.query;
+    if (!userId) { res.status(400).json({ error: 'User ID required' }); return; }
+    const normId = userId.toLowerCase();
+    
+    try {
+        const engine = ACTIVE_BOTS.get(normId);
+        if (!engine) return res.status(404).json({ error: 'Bot not running' });
+        
+        // Get open orders from adapter
+        const adapter = engine.getAdapter();
+        if (!adapter) return res.status(500).json({ error: 'Adapter not initialized' });
+        
+        const orders = await adapter.getOpenOrders();
+        res.json({ success: true, orders });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/orders/cancel', async (req: any, res: any) => {
+    const { userId, orderId } = req.body;
+    if (!userId || !orderId) { 
+        res.status(400).json({ error: 'User ID and Order ID required' }); 
+        return; 
+    }
+    const normId = userId.toLowerCase();
+    
+    try {
+        const engine = ACTIVE_BOTS.get(normId);
+        if (!engine) return res.status(404).json({ error: 'Bot not running' });
+        
+        const adapter = engine.getAdapter();
+        if (!adapter) return res.status(500).json({ error: 'Adapter not initialized' });
+        
+        const success = await adapter.cancelOrder(orderId);
+        
+        if (success) {
+            res.json({ success: true, message: 'Order cancelled successfully' });
+        } else {
+            res.status(400).json({ error: 'Failed to cancel order' });
+        }
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/redeem', async (req: any, res: any) => {
+    const { userId, marketId, outcome } = req.body;
+    if (!userId || !marketId || !outcome) { 
+        res.status(400).json({ error: 'User ID, Market ID, and Outcome required' }); 
+        return; 
+    }
+    const normId = userId.toLowerCase();
+    
+    try {
+        const engine = ACTIVE_BOTS.get(normId);
+        if (!engine) return res.status(404).json({ error: 'Bot not running' });
+        
+        const adapter = engine.getAdapter();
+        // For now, return success - actual redemption implementation would go here
+        res.json({ success: true, message: 'Redemption functionality coming soon' });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.get('*', (req, res) => {
     const indexPath = path.join(distPath, 'index.html');
     if (!fs.existsSync(indexPath)) {
