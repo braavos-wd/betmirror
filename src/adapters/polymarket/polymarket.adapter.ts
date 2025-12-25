@@ -195,11 +195,9 @@ export class PolymarketAdapter implements IExchangeAdapter {
     async getMarketPrice(marketId: string, tokenId: string, side: 'BUY' | 'SELL' = 'BUY'): Promise<number> {
         if (!this.client) return 0;
         try {
-            // Use getPrice for more accurate best execution price
             const priceRes = await this.client.getPrice(tokenId, side as any);
             return parseFloat(priceRes.price) || 0;
         } catch (e) {
-            // Fallback to midpoint if no liquidity on that specific side
             try {
                 const mid = await this.client.getMidpoint(tokenId);
                 return parseFloat(mid.mid) || 0;
@@ -221,9 +219,17 @@ export class PolymarketAdapter implements IExchangeAdapter {
     async getOrderBook(tokenId: string): Promise<OrderBook> {
         if (!this.client) throw new Error("Not auth");
         const book = await this.client.getOrderBook(tokenId);
+        
+        const sortedBids = book.bids
+            .map(b => ({ price: parseFloat(b.price), size: parseFloat(b.size) }))
+            .sort((a, b) => b.price - a.price);
+        const sortedAsks = book.asks
+            .map(a => ({ price: parseFloat(a.price), size: parseFloat(a.size) }))
+            .sort((a, b) => a.price - b.price);
+
         return {
-            bids: book.bids.map(b => ({ price: parseFloat(b.price), size: parseFloat(b.size) })),
-            asks: book.asks.map(a => ({ price: parseFloat(a.price), size: parseFloat(a.size) })),
+            bids: sortedBids,
+            asks: sortedAsks,
             min_order_size: (book as any).min_order_size ? Number((book as any).min_order_size) : 5,
             tick_size: (book as any).tick_size ? Number((book as any).tick_size) : 0.01,
             neg_risk: (book as any).neg_risk
@@ -236,12 +242,9 @@ export class PolymarketAdapter implements IExchangeAdapter {
         let question = marketId;
         let image = "";
 
-        // CLOB API for market data - force fresh fetch
         if (this.client && marketId) {
             try {
-                // Clear cache to force fresh data
                 this.marketMetadataCache.delete(marketId);
-                
                 const marketData = await this.client.getMarket(marketId);
                 this.marketMetadataCache.set(marketId, marketData);
 
@@ -255,7 +258,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
             }
         }
 
-        // Gamma API for event slug - use slug endpoint for accurate results
         if (marketSlug) {
             try {
                 const gammaUrl = `https://gamma-api.polymarket.com/markets/slug/${marketSlug}`;
@@ -267,8 +269,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 
                 if (gammaResponse.ok) {
                     const marketData = await gammaResponse.json();
-                    
-                    // The event slug should be in the events array
                     if (marketData.events && marketData.events.length > 0) {
                         eventSlug = marketData.events[0]?.slug || "";
                     }
@@ -308,7 +308,6 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 const unrealizedPnL = currentValueUsd - investedValueUsd;
                 const unrealizedPnLPercent = investedValueUsd > 0 ? (unrealizedPnL / investedValueUsd) * 100 : 0;
                 
-                // RESTORED: Deep slug fetching logic
                 const { marketSlug, eventSlug, question, image } = await this.fetchMarketSlugs(marketId);
 
                 positions.push({
@@ -373,40 +372,38 @@ export class PolymarketAdapter implements IExchangeAdapter {
             }
 
             const side = params.side === 'BUY' ? Side.BUY : Side.SELL;
+            const book = await this.getOrderBook(params.tokenId);
             
-            // Single fetch of orderbook for efficiency and accuracy
-            const book = await this.client.getOrderBook(params.tokenId);
-            
-            // Log market levels for transparency
             const topBids = book.bids.slice(0, 3).map(b => `${b.price} (${b.size})`).join(', ');
             const topAsks = book.asks.slice(0, 3).map(a => `${a.price} (${a.size})`).join(', ');
             this.logger.info(`Book [${params.tokenId}]: Bids: [${topBids || 'none'}] | Asks: [${topAsks || 'none'}]`);
 
-            // Determine execution price based on side
             let rawPrice: number;
             if (side === Side.SELL) {
                 if (!book.bids.length) return { success: false, error: "skipped_no_bids", sharesFilled: 0, priceFilled: 0 };
-                rawPrice = parseFloat(book.bids[0].price); // Hit the best bid
+                // BOOK SWEEP LOGIC: If we are selling, we use the priceLimit as the FLOOR.
+                // If no limit is provided, we use the best bid.
+                // In production, sending a low floor (like 0.001) with FAK ensures we sweep all bids instantly.
+                rawPrice = params.priceLimit !== undefined ? params.priceLimit : book.bids[0].price; 
             } else {
                 if (!book.asks.length) return { success: false, error: "skipped_no_liquidity", sharesFilled: 0, priceFilled: 0 };
-                // For buys, use best ask price or user-defined limit
-                rawPrice = params.priceLimit || parseFloat(book.asks[0].price);
+                rawPrice = params.priceLimit !== undefined ? params.priceLimit : book.asks[0].price;
             }
 
-            // Round to tick size based on direction (Buys ceil, Sells floor)
             const inverseTick = Math.round(1 / tickSize);
             const roundedPrice = side === Side.BUY 
                 ? Math.ceil(rawPrice * inverseTick) / inverseTick
                 : Math.floor(rawPrice * inverseTick) / inverseTick;
             const finalPrice = Math.max(0.001, Math.min(0.999, roundedPrice));
 
-            // Calculate shares
             const shares = params.sizeShares || Math.floor(params.sizeUsd / finalPrice);
+            
             if (shares < minOrderSize) {
-                return { success: false, error: "skipped_min_size_limit", sharesFilled: 0, priceFilled: 0 };
+                const errorMsg = `EXCHANGE_LIMIT: Position (${shares.toFixed(2)} shares) is below the Polymarket minimum of ${minOrderSize.toFixed(2)} shares. You must buy more to reach the minimum before you can sell.`;
+                return { success: false, error: errorMsg, sharesFilled: 0, priceFilled: 0 };
             }
 
-            this.logger.info(`Placing Order: ${params.side} ${shares} shares @ ${finalPrice.toFixed(3)}`);
+            this.logger.info(`Placing Order: ${params.side} ${shares} shares @ ${finalPrice.toFixed(3)} (Limit)`);
 
             const orderArgs = {
                 tokenID: params.tokenId,
@@ -439,7 +436,8 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 this.initClobClient(this.config.l2ApiCredentials);
                 return this.createOrder(params, retryCount + 1);
             }
-            return { success: false, error: error.message, sharesFilled: 0, priceFilled: 0 };
+            const msg = typeof error === 'string' ? error : (error.message || "Unknown Adapter Error");
+            return { success: false, error: msg, sharesFilled: 0, priceFilled: 0 };
         }
     }
 
@@ -452,7 +450,13 @@ export class PolymarketAdapter implements IExchangeAdapter {
     }
 
     async getOpenOrders(): Promise<any[]> {
-        return [];
+        if (!this.client) return [];
+        try {
+            const orders = await this.client.getOpenOrders();
+            return orders || [];
+        } catch (e) {
+            return [];
+        }
     }
 
     async cashout(amount: number, destination: string): Promise<string> {

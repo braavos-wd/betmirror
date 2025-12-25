@@ -3,23 +3,24 @@ import { httpGet } from '../utils/http.js';
 export class TradeExecutorService {
     deps;
     balanceCache = new Map();
-    CACHE_TTL = 5 * 60 * 1000; // 5 Minutes Cache for Whales
-    // Local deduction tracker to prevent race conditions
+    CACHE_TTL = 5 * 60 * 1000;
     pendingSpend = 0;
     lastBalanceFetch = 0;
     constructor(deps) {
         this.deps = deps;
     }
     /**
-     * Execute Exit sells SHARES, not USD amount, ensuring 100% closure regardless of price
+     * Execute Exit: Uses an ultra-low floor (0.001) to sweep all available liquidity descending.
+     * This handles illiquid books by hitting multiple bid levels instantly.
      */
     async executeManualExit(position, currentPrice) {
         const { logger, adapter } = this.deps;
         let remainingShares = position.shares;
-        let totalSold = 0;
         try {
-            logger.info(`📉 Executing Manual Exit: Selling ${remainingShares} shares of ${position.tokenId} (Ref Price: ${currentPrice})`);
-            // Try market sell first (priceLimit: 0)
+            logger.info(`📉 Executing Market Exit: Offloading ${remainingShares} shares of ${position.tokenId}...`);
+            // PRODUCTION STRATEGY: Sweeping the book.
+            // By setting the floor to 0.001 and using FAK, we fill as much as possible 
+            // across all existing bid levels instantly.
             const result = await adapter.createOrder({
                 marketId: position.marketId,
                 tokenId: position.tokenId,
@@ -27,54 +28,34 @@ export class TradeExecutorService {
                 side: 'SELL',
                 sizeUsd: 0,
                 sizeShares: remainingShares,
-                priceLimit: 0 // Market sell (hit the bid)
+                priceLimit: 0.001 // Sweep the book floor
             });
-            if (result.success && result.sharesFilled) {
-                remainingShares -= result.sharesFilled;
-                totalSold += result.sharesFilled;
-                logger.info(`Sold ${result.sharesFilled} shares, ${remainingShares} remaining`);
-            }
-            // If we still have shares to sell, try progressively lower prices
-            if (remainingShares > 0) {
-                logger.warn(`${remainingShares} shares remaining, trying progressive price reduction...`);
-                const priceLevels = [currentPrice * 0.5, currentPrice * 0.25, currentPrice * 0.1, 0.01];
-                for (const price of priceLevels) {
-                    if (price < 0.01 || remainingShares <= 0)
-                        continue;
-                    logger.info(`Trying to sell ${remainingShares} shares at ${price.toFixed(3)}...`);
-                    const fallbackResult = await adapter.createOrder({
-                        marketId: position.marketId,
-                        tokenId: position.tokenId,
-                        outcome: position.outcome,
-                        side: 'SELL',
-                        sizeUsd: 0,
-                        sizeShares: remainingShares,
-                        priceLimit: price
-                    });
-                    if (fallbackResult.success && fallbackResult.sharesFilled) {
-                        remainingShares -= fallbackResult.sharesFilled;
-                        totalSold += fallbackResult.sharesFilled;
-                        logger.success(`Sold ${fallbackResult.sharesFilled} shares at ${price.toFixed(3)}, ${remainingShares} remaining`);
+            if (result.success) {
+                const filled = result.sharesFilled || 0;
+                const diff = position.shares - filled;
+                if (diff > 0.01) {
+                    // Partial fill detected. This happens if the book runs out of bids above $0.001.
+                    logger.warn(`⚠️ Partial Fill: Only liquidated ${filled}/${position.shares} shares. ${diff.toFixed(2)} shares remain stuck due to book depth.`);
+                    if (diff < 5) {
+                        logger.error(`🚨 Residual Dust: Remaining ${diff.toFixed(2)} shares are below exchange minimum (5). These cannot be sold until you buy more.`);
                     }
                 }
-            }
-            if (totalSold > 0) {
-                logger.success(`Exit completed: Sold ${totalSold}/${position.shares} shares total`);
+                logger.success(`Exit summary: Liquidated ${filled.toFixed(2)} shares @ avg best possible price.`);
                 return true;
             }
             else {
-                logger.error(`All exit attempts failed for ${position.tokenId}`);
+                const errorStr = result.error || "Unknown Exchange Error";
+                logger.error(`Exit attempt failed: ${errorStr}`);
                 return false;
             }
         }
         catch (e) {
-            logger.error(`Failed to execute manual exit`, e);
+            logger.error(`Failed to execute manual exit: ${e.message}`, e);
             return false;
         }
     }
     async copyTrade(signal) {
         const { logger, env, adapter, proxyWallet } = this.deps;
-        // Default Failure Result
         const failResult = (reason) => ({
             status: 'SKIPPED',
             executedAmount: 0,
@@ -84,15 +65,12 @@ export class TradeExecutorService {
         });
         try {
             let usableBalanceForTrade = 0;
-            // 1. Determine Source Capital (Cash vs Position)
             if (signal.side === 'BUY') {
-                // BUY: Use Wallet Cash
                 let chainBalance = 0;
                 chainBalance = await adapter.fetchBalance(proxyWallet);
                 usableBalanceForTrade = Math.max(0, chainBalance - this.pendingSpend);
             }
             else {
-                // SELL: Use Existing Position Value
                 const positions = await adapter.getPositions(proxyWallet);
                 const myPosition = positions.find(p => p.tokenId === signal.tokenId);
                 if (!myPosition || myPosition.balance <= 0) {
@@ -100,10 +78,8 @@ export class TradeExecutorService {
                 }
                 usableBalanceForTrade = myPosition.valueUsd;
             }
-            // 2. Get Whale Balance (Total Portfolio Value)
             const traderBalance = await this.getTraderBalance(signal.trader);
-            // 3. Fetch market's minimum order size
-            let minOrderSize = 5; // Default
+            let minOrderSize = 5;
             try {
                 const book = await adapter.getOrderBook(signal.tokenId);
                 if (book.min_order_size) {
@@ -113,7 +89,6 @@ export class TradeExecutorService {
             catch (e) {
                 logger.debug(`Using default minOrderSize: ${minOrderSize}`);
             }
-            // 4. Compute Size with minOrderSize and Directional intent
             const sizing = computeProportionalSizing({
                 yourUsdBalance: usableBalanceForTrade,
                 traderUsdBalance: traderBalance,
@@ -128,24 +103,20 @@ export class TradeExecutorService {
                     return failResult("skipped_insufficient_balance_min_1");
                 return failResult(sizing.reason || "skipped_size_too_small");
             }
-            // 5. Calculate Price Limit (SLIPPAGE PROTECTION)
-            let priceLimit = 0;
+            let priceLimit = undefined;
             const SLIPPAGE_PCT = 0.05;
             if (signal.side === 'BUY') {
-                // BUY: Willing to pay slightly more
                 priceLimit = signal.price * (1 + SLIPPAGE_PCT);
                 if (priceLimit > 0.99)
                     priceLimit = 0.99;
             }
             else {
-                // SELL: Willing to accept slightly less
-                priceLimit = signal.price * (1 - SLIPPAGE_PCT);
-                if (priceLimit < 0.01)
-                    priceLimit = 0.01;
+                // AUTOMATED SELL SWEEP: Allow 10% slippage on follow-trades to prevent getting stuck
+                priceLimit = signal.price * (1 - 0.10);
+                if (priceLimit < 0.001)
+                    priceLimit = 0.001;
             }
-            // 6. Log sizing info with new share-count transparency
-            logger.info(`[Sizing] Whale: $${traderBalance.toFixed(0)} | Signal: $${signal.sizeUsd.toFixed(0)} (${signal.side}) | You: $${usableBalanceForTrade.toFixed(2)} | Target: $${sizing.targetUsdSize.toFixed(2)} (${sizing.targetShares} shares)`);
-            // 7. Execute via Adapter
+            logger.info(`[Sizing] Whale: $${traderBalance.toFixed(0)} | Signal: $${signal.sizeUsd.toFixed(0)} (${signal.side}) | Target: $${sizing.targetUsdSize.toFixed(2)} (${sizing.targetShares} shares)`);
             const result = await adapter.createOrder({
                 marketId: signal.marketId,
                 tokenId: signal.tokenId,
@@ -154,7 +125,6 @@ export class TradeExecutorService {
                 sizeUsd: sizing.targetUsdSize,
                 priceLimit: priceLimit
             });
-            // 8. Check Result
             if (!result.success) {
                 return {
                     status: 'FAILED',
@@ -164,7 +134,6 @@ export class TradeExecutorService {
                     reason: result.error || 'Unknown error'
                 };
             }
-            // 9. Success - Update Pending Spend (Only for Buys)
             if (signal.side === 'BUY') {
                 this.pendingSpend += sizing.targetUsdSize;
             }
