@@ -70,18 +70,23 @@ async function startUserBot(userId: string, config: BotConfig) {
             await User.updateOne({ address: normId }, { $push: { cashoutHistory: record } });
         },
         onTradeComplete: async (trade) => {
-            // Restore missing user stats update logic
             try {
-                const user = await User.findOne({ address: normId });
-                if (user) {
-                    const stats = user.stats || { totalVolume: 0, tradesCount: 0, totalPnl: 0 };
-                    stats.totalVolume = (stats.totalVolume || 0) + (trade.executedSize || 0);
-                    stats.tradesCount = (stats.tradesCount || 0) + 1;
-                    if (trade.pnl !== undefined) {
-                        stats.totalPnl = (stats.totalPnl || 0) + trade.pnl;
+                // ATOMIC STATS UPDATE
+                // We use $inc to prevent race conditions and ensure accurate accounting
+                const update: any = {
+                    $inc: {
+                        'stats.totalVolume': trade.executedSize || 0,
+                        'stats.tradesCount': 1
                     }
-                    await User.updateOne({ address: normId }, { stats });
+                };
+
+                if (trade.side === 'SELL' && trade.pnl !== undefined) {
+                    update.$inc['stats.totalPnl'] = trade.pnl;
+                    if (trade.pnl >= 0) update.$inc['stats.winCount'] = 1;
+                    else update.$inc['stats.lossCount'] = 1;
                 }
+
+                await User.updateOne({ address: normId }, update);
 
                 const exists = await Trade.findById(trade.id);
                 if (!exists) {
@@ -871,6 +876,21 @@ app.post('/api/redeem', async (req: any, res: any) => {
     } catch (e: any) {
         res.status(500).json({ error: e.message });
     }
+});
+
+app.post('/api/feedback', async (req: any, res: any) => {
+  const { userId, rating, comment } = req.body;
+  try {
+      await Feedback.create({
+          userId: userId?.toLowerCase() || "anonymous",
+          rating: Number(rating),
+          comment,
+          timestamp: new Date()
+      });
+      res.json({ success: true });
+  } catch (e: any) {
+      res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('*', (req, res) => {
