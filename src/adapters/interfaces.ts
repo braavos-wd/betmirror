@@ -3,6 +3,21 @@ import { TradeSignal, TradeHistoryEntry } from '../domain/trade.types.js';
 
 export type OrderSide = 'BUY' | 'SELL';
 
+export enum LiquidityHealth {
+    HIGH = 'HIGH',       // Tight spread, deep book
+    MEDIUM = 'MEDIUM',   // Moderate spread/depth
+    LOW = 'LOW',         // Wide spread or thin book
+    CRITICAL = 'CRITICAL' // No liquidity or extreme spread
+}
+
+export interface LiquidityMetrics {
+    health: LiquidityHealth;
+    spread: number;
+    spreadPercent: number;
+    availableDepthUsd: number;
+    bestPrice: number;
+}
+
 export interface OrderParams {
     marketId: string;
     tokenId: string;
@@ -10,7 +25,7 @@ export interface OrderParams {
     side: OrderSide;
     sizeUsd: number;
     priceLimit?: number;
-    // New: Allow specifying raw share count for sells
+    // Allow specifying raw share count for sells
     sizeShares?: number; 
 }
 
@@ -25,7 +40,6 @@ export interface OrderResult {
 
 /**
  * Standard Interface for any Prediction Market Exchange (Polymarket, Kalshi, etc.)
- * This allows the BotEngine to switch between exchanges or auth methods without code changes.
  */
 export interface IExchangeAdapter {
     readonly exchangeName: string;
@@ -44,6 +58,9 @@ export interface IExchangeAdapter {
     getOrderBook(tokenId: string): Promise<OrderBook>;
     getPositions(address: string): Promise<PositionData[]>; 
     
+    // Liquidity Analysis
+    getLiquidityMetrics?(tokenId: string, side: 'BUY' | 'SELL'): Promise<LiquidityMetrics>;
+
     // Monitoring
     fetchPublicTrades(address: string, limit?: number): Promise<TradeSignal[]>;
     
@@ -57,7 +74,6 @@ export interface IExchangeAdapter {
     // Order Management
     cashout(amount: number, destination: string): Promise<string>;
     
-    // Legacy Accessors (Temporary during migration phase)
     getRawClient?(): any;
     getSigner?(): any;
     getFunderAddress?(): string | undefined; 

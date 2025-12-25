@@ -1,5 +1,6 @@
 import { computeProportionalSizing } from '../config/copy-strategy.js';
 import { httpGet } from '../utils/http.js';
+import { LiquidityHealth } from '../adapters/interfaces.js';
 export class TradeExecutorService {
     deps;
     balanceCache = new Map();
@@ -9,18 +10,11 @@ export class TradeExecutorService {
     constructor(deps) {
         this.deps = deps;
     }
-    /**
-     * Execute Exit: Uses an ultra-low floor (0.001) to sweep all available liquidity descending.
-     * This handles illiquid books by hitting multiple bid levels instantly.
-     */
     async executeManualExit(position, currentPrice) {
         const { logger, adapter } = this.deps;
         let remainingShares = position.shares;
         try {
             logger.info(`📉 Executing Market Exit: Offloading ${remainingShares} shares of ${position.tokenId}...`);
-            // PRODUCTION STRATEGY: Sweeping the book.
-            // By setting the floor to 0.001 and using FAK, we fill as much as possible 
-            // across all existing bid levels instantly.
             const result = await adapter.createOrder({
                 marketId: position.marketId,
                 tokenId: position.tokenId,
@@ -28,13 +22,12 @@ export class TradeExecutorService {
                 side: 'SELL',
                 sizeUsd: 0,
                 sizeShares: remainingShares,
-                priceLimit: 0.001 // Sweep the book floor
+                priceLimit: 0.001
             });
             if (result.success) {
                 const filled = result.sharesFilled || 0;
                 const diff = position.shares - filled;
                 if (diff > 0.01) {
-                    // Partial fill detected. This happens if the book runs out of bids above $0.001.
                     logger.warn(`⚠️ Partial Fill: Only liquidated ${filled}/${position.shares} shares. ${diff.toFixed(2)} shares remain stuck due to book depth.`);
                     if (diff < 5) {
                         logger.error(`🚨 Residual Dust: Remaining ${diff.toFixed(2)} shares are below exchange minimum (5). These cannot be sold until you buy more.`);
@@ -56,14 +49,30 @@ export class TradeExecutorService {
     }
     async copyTrade(signal) {
         const { logger, env, adapter, proxyWallet } = this.deps;
-        const failResult = (reason) => ({
-            status: 'SKIPPED',
+        const failResult = (reason, status = 'SKIPPED') => ({
+            status,
             executedAmount: 0,
             executedShares: 0,
             priceFilled: 0,
             reason
         });
         try {
+            // PRE-FLIGHT LIQUIDITY GUARD
+            if (this.deps.adapter.getLiquidityMetrics) {
+                const metrics = await this.deps.adapter.getLiquidityMetrics(signal.tokenId, signal.side);
+                const minRequired = this.deps.env.minLiquidityFilter || 'LOW';
+                const ranks = {
+                    [LiquidityHealth.HIGH]: 3,
+                    [LiquidityHealth.MEDIUM]: 2,
+                    [LiquidityHealth.LOW]: 1,
+                    [LiquidityHealth.CRITICAL]: 0
+                };
+                if (ranks[metrics.health] < ranks[minRequired]) {
+                    const msg = `[Liquidity Filter] Market health ${metrics.health} is below your required ${minRequired} threshold. (Spread: ${metrics.spreadPercent.toFixed(1)}%, Depth: $${metrics.availableDepthUsd.toFixed(0)}) -> SKIPPING`;
+                    logger.warn(msg);
+                    return failResult("insufficient_liquidity", "ILLIQUID");
+                }
+            }
             let usableBalanceForTrade = 0;
             if (signal.side === 'BUY') {
                 let chainBalance = 0;
@@ -111,7 +120,6 @@ export class TradeExecutorService {
                     priceLimit = 0.99;
             }
             else {
-                // AUTOMATED SELL SWEEP: Allow 10% slippage on follow-trades to prevent getting stuck
                 priceLimit = signal.price * (1 - 0.10);
                 if (priceLimit < 0.001)
                     priceLimit = 0.001;

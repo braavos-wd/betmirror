@@ -54,6 +54,7 @@ rpcUrl: string;
 geminiApiKey: string;
 multiplier: number;
 riskProfile: 'conservative' | 'balanced' | 'degen';
+minLiquidityFilter: 'HIGH' | 'MEDIUM' | 'LOW';
 autoTp: number;
 enableNotifications: boolean;
 userPhoneNumber: string;
@@ -1262,6 +1263,7 @@ const [config, setConfig] = useState<AppConfig>({
     geminiApiKey: '',
     multiplier: 1.0,
     riskProfile: 'balanced',
+    minLiquidityFilter: 'LOW',
     autoTp: 20,
     enableNotifications: false,
     userPhoneNumber: '',
@@ -1288,8 +1290,9 @@ const updateConfig = async (newConfig: AppConfig) => {
                 targets: newConfig.targets,
                 multiplier: newConfig.multiplier,
                 riskProfile: newConfig.riskProfile,
+                minLiquidityFilter: newConfig.minLiquidityFilter,
                 autoTp: newConfig.autoTp,
-                maxTradeAmount: newConfig.maxTradeAmount, // ADDED
+                maxTradeAmount: newConfig.maxTradeAmount,
                 autoCashout: {
                     enabled: newConfig.enableAutoCashout,
                     maxAmount: newConfig.maxRetentionAmount,
@@ -3365,6 +3368,30 @@ return (
                                     {showSecrets ? <EyeOff size={12}/> : <Eye size={12}/>}
                                 </button>
                             </div>
+                        </div>
+
+                        {/* NEW: Liquidity Guard Section */}
+                        <div className="bg-white dark:bg-terminal-card border border-gray-200 dark:border-terminal-border rounded-xl p-6 shadow-sm dark:shadow-none">
+                            <div className="flex items-center justify-between mb-4">
+                                <label className="text-xs text-gray-500 font-bold uppercase flex items-center gap-2">
+                                    <Zap size={14} className="text-blue-500"/> Liquidity Filter
+                                </label>
+                                <Tooltip text="Slippage Protection: Only trade in markets that meet this liquidity health level. HIGH is safest but skips more trades." />
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                                {['HIGH', 'MEDIUM', 'LOW'].map(level => (
+                                    <button 
+                                        key={level} 
+                                        onClick={() => updateConfig({...config, minLiquidityFilter: level as any})} 
+                                        className={`py-2 px-1 rounded-lg text-[10px] font-bold uppercase border transition-all ${config.minLiquidityFilter === level ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-500 text-blue-600 dark:text-blue-400' : 'border-gray-200 dark:border-gray-800 text-gray-500 hover:bg-gray-50 dark:hover:bg-white/5'}`}
+                                    >
+                                        {level}
+                                    </button>
+                                ))}
+                            </div>
+                            <p className="text-[10px] text-gray-400 mt-3 italic">
+                                *Filters based on spread % and order book depth.
+                            </p>
                         </div>
 
                         {/* Alerts & Notifications (RESTORED) */}

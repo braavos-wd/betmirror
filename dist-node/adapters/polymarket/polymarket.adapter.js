@@ -1,3 +1,4 @@
+import { LiquidityHealth } from '../interfaces.js';
 import { ClobClient, Chain, OrderType, Side } from '@polymarket/clob-client';
 import { JsonRpcProvider, Contract, formatUnits } from 'ethers';
 import { EvmWalletService } from '../../services/evm-wallet.service.js';
@@ -162,6 +163,40 @@ export class PolymarketAdapter {
             min_order_size: book.min_order_size ? Number(book.min_order_size) : 5,
             tick_size: book.tick_size ? Number(book.tick_size) : 0.01,
             neg_risk: book.neg_risk
+        };
+    }
+    async getLiquidityMetrics(tokenId, side) {
+        if (!this.client)
+            throw new Error("Not auth");
+        const book = await this.client.getOrderBook(tokenId);
+        const bestBid = book.bids.length > 0 ? parseFloat(book.bids[0].price) : 0;
+        const bestAsk = book.asks.length > 0 ? parseFloat(book.asks[0].price) : 1;
+        const spread = bestAsk - bestBid;
+        const midpoint = (bestBid + bestAsk) / 2;
+        const spreadPercent = midpoint > 0 ? (spread / midpoint) * 100 : 100;
+        // Depth calculation with explicit parsing
+        let depthUsd = 0;
+        if (side === 'SELL') {
+            // How much USD is waiting to buy our shares?
+            depthUsd = book.bids.slice(0, 3).reduce((sum, b) => sum + (parseFloat(b.size) * parseFloat(b.price)), 0);
+        }
+        else {
+            // How much USD of shares is available for us to buy?
+            depthUsd = book.asks.slice(0, 3).reduce((sum, a) => sum + (parseFloat(a.size) * parseFloat(a.price)), 0);
+        }
+        let health = LiquidityHealth.CRITICAL;
+        if (spreadPercent <= 1.5 && depthUsd >= 500)
+            health = LiquidityHealth.HIGH;
+        else if (spreadPercent <= 4.0 && depthUsd >= 100)
+            health = LiquidityHealth.MEDIUM;
+        else if (spreadPercent <= 10.0 && depthUsd >= 20)
+            health = LiquidityHealth.LOW;
+        return {
+            health,
+            spread,
+            spreadPercent,
+            availableDepthUsd: depthUsd,
+            bestPrice: side === 'SELL' ? bestBid : bestAsk
         };
     }
     async fetchMarketSlugs(marketId) {
@@ -385,10 +420,10 @@ export class PolymarketAdapter {
         const amountStr = Math.floor(amount * 1000000).toString();
         return await this.safeManager.withdrawUSDC(destination, amountStr);
     }
-    async ensureOutcomeTokenApproval(isNegRisk) {
+    // FIX: Removed duplicate function implementation that accepted (safeAddress: string, operatorAddress: string)
+    async ensureOutcomeTokenApprovalLegacy(isNegRisk) {
         if (!this.safeManager)
             throw new Error("Safe Manager not initialized");
-        const CTF_ADDRESS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045";
         const EXCHANGE = isNegRisk
             ? "0xC5d563A36AE78145C45a50134d48A1215220f80a"
             : "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E";
@@ -407,6 +442,10 @@ export class PolymarketAdapter {
             this.logger.error(`Failed to approve outcome tokens: ${e.message}`);
             throw e;
         }
+    }
+    // Helper for internal use to avoid signature mismatch
+    async ensureOutcomeTokenApproval(isNegRisk) {
+        return this.ensureOutcomeTokenApprovalLegacy(isNegRisk);
     }
     getFunderAddress() {
         return this.safeAddress || this.config.walletConfig.address;
