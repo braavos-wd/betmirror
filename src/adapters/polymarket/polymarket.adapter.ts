@@ -495,7 +495,26 @@ export class PolymarketAdapter implements IExchangeAdapter {
                 this.initClobClient(this.config.l2ApiCredentials);
                 return this.createOrder(params, retryCount + 1);
             }
-            return { success: false, error: error.message || "Unknown Error", sharesFilled: 0, priceFilled: 0 };
+            
+            // Improve error messaging for balance vs allowance issues
+            let errorMessage = error.message || "Unknown Error";
+            if (errorMessage.includes("not enough balance / allowance")) {
+                // Check if it's specifically an allowance issue by checking current allowance
+                try {
+                    const allowance = await this.checkUsdcAllowance();
+                    const balance = await this.fetchBalance(this.config.proxyWallet);
+                    
+                    if (allowance < (params.sizeUsd || 0)) {
+                        errorMessage = `INSUFFICIENT_ALLOWANCE (allowance: $${allowance.toFixed(2)}, needed: $${params.sizeUsd?.toFixed(2) || '0'}) - Please approve allowance`;
+                    } else {
+                        errorMessage = `INSUFFICIENT_BALANCE (balance: $${balance.toFixed(2)}, needed: $${params.sizeUsd?.toFixed(2) || '0'})`;
+                    }
+                } catch (e) {
+                    errorMessage = "BALANCE_OR_ALLOWANCE_ISSUE - Check wallet balance and token allowance";
+                }
+            }
+            
+            return { success: false, error: errorMessage, sharesFilled: 0, priceFilled: 0 };
         }
     }
 

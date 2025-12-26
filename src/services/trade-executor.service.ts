@@ -134,6 +134,12 @@ export class TradeExecutorService {
 
       const traderBalance = await this.getTraderBalance(signal.trader);
 
+      // Check for insufficient funds BEFORE sizing computation
+      if (signal.side === 'BUY' && usableBalanceForTrade < 1) {
+          const chainBalance = await adapter.fetchBalance(proxyWallet);
+          return failResult(`insufficient_funds (balance: $${chainBalance.toFixed(2)}, pending: $${this.pendingSpend.toFixed(2)}, available: $${usableBalanceForTrade.toFixed(2)})`, "FAILED");
+      }
+
       let minOrderSize = 5; 
       try {
           const book = await adapter.getOrderBook(signal.tokenId);
