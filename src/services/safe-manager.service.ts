@@ -468,4 +468,21 @@ export class SafeManagerService {
             throw e;
         }
     }
+
+    public async executeTransaction(tx: { to: string; data: string; value: string }): Promise<string> {
+        const safeTx: SafeTransaction = { 
+            to: tx.to as `0x${string}`, 
+            value: tx.value as `0x${string}`, 
+            data: tx.data as `0x${string}`, 
+            operation: OperationType.Call 
+        };
+        
+        try {
+            const task = await this.relayClient.execute([safeTx]);
+            const result = await task.wait();
+            return (result as any).transactionHash || "0x...";
+        } catch (e: any) {
+            throw e;
+        }
+    }
 }

@@ -96,6 +96,33 @@ export class TradeExecutorService {
     });
 
     try {
+      // MARKET VALIDATION - Check if market is still tradeable
+      try {
+        const market = await (adapter as any).getRawClient().getMarket(signal.marketId);
+        
+        if (!market) {
+          logger.warn(`[Market Not Found] ${signal.marketId} - Skipping`);
+          return failResult("market_not_found");
+        }
+        if (market.closed) {
+          logger.warn(`[Market Closed] ${signal.marketId} - Skipping`);
+          return failResult("market_closed");
+        }
+        if (!market.active || !market.accepting_orders) {
+          logger.warn(`[Market Inactive] ${signal.marketId} - Skipping`);
+          return failResult("market_not_accepting_orders");
+        }
+        if (market.archived) {
+          logger.warn(`[Market Archived] ${signal.marketId} - Skipping`);
+          return failResult("market_archived");
+        }
+      } catch (e: any) {
+        if (e.message?.includes("404") || e.message?.includes("No orderbook") || String(e).includes("404")) {
+          logger.warn(`[Market Unavailable] ${signal.marketId} - Order book doesn't exist`);
+          return failResult("orderbook_not_found");
+        }
+        throw e;
+      }
       if (this.deps.adapter.getLiquidityMetrics) {
           const metrics = await this.deps.adapter.getLiquidityMetrics(signal.tokenId, signal.side);
           const minRequired = (this.deps.env as any).minLiquidityFilter || 'LOW';

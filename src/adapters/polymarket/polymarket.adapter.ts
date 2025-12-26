@@ -9,7 +9,7 @@ import {
 import { OrderBook, PositionData } from '../../domain/market.types.js';
 import { TradeSignal, TradeHistoryEntry } from '../../domain/trade.types.js';
 import { ClobClient, Chain, OrderType, Side } from '@polymarket/clob-client';
-import { Wallet as WalletV6, JsonRpcProvider, Contract, formatUnits } from 'ethers';
+import { Wallet as WalletV6, JsonRpcProvider, Contract, formatUnits, Interface } from 'ethers';
 import { Wallet as WalletV5 } from 'ethers-v5'; // V5 for SDK
 import { EvmWalletService } from '../../services/evm-wallet.service.js';
 import { SafeManagerService } from '../../services/safe-manager.service.js';
@@ -212,23 +212,32 @@ export class PolymarketAdapter implements IExchangeAdapter {
 
     async getOrderBook(tokenId: string): Promise<OrderBook> {
         if (!this.client) throw new Error("Not auth");
-        const book = await this.client.getOrderBook(tokenId);
-        
-        // MUST sort and parse - API may return strings in any order
-        const sortedBids = book.bids
-            .map(b => ({ price: parseFloat(b.price), size: parseFloat(b.size) }))
-            .sort((a, b) => b.price - a.price); // Highest bid first
-        const sortedAsks = book.asks
-            .map(a => ({ price: parseFloat(a.price), size: parseFloat(a.size) }))
-            .sort((a, b) => a.price - b.price); // Lowest ask first
+        try {
+            const book = await this.client.getOrderBook(tokenId);
+            
+            // MUST sort and parse - API may return strings in any order
+            const sortedBids = book.bids
+                .map(b => ({ price: parseFloat(b.price), size: parseFloat(b.size) }))
+                .sort((a, b) => b.price - a.price); // Highest bid first
+            const sortedAsks = book.asks
+                .map(a => ({ price: parseFloat(a.price), size: parseFloat(a.size) }))
+                .sort((a, b) => a.price - b.price); // Lowest ask first
 
-        return {
-            bids: sortedBids,
-            asks: sortedAsks,
-            min_order_size: Number((book as any).min_order_size) || 5,
-            tick_size: Number((book as any).tick_size) || 0.01,
-            neg_risk: (book as any).neg_risk
-        };
+            return {
+                bids: sortedBids,
+                asks: sortedAsks,
+                min_order_size: Number((book as any).min_order_size) || 5,
+                tick_size: Number((book as any).tick_size) || 0.01,
+                neg_risk: (book as any).neg_risk
+            };
+        } catch (e: any) {
+            if (String(e).includes("404") || String(e).includes("No orderbook")) {
+                // Return empty book for closed markets
+                this.logger.warn(`[OrderBook] Market closed or not found for token ${tokenId.slice(0, 10)}...`);
+                return { bids: [], asks: [], min_order_size: 5, tick_size: 0.01, neg_risk: false };
+            }
+            throw e;
+        }
     }
 
     /**
@@ -610,5 +619,65 @@ export class PolymarketAdapter implements IExchangeAdapter {
 
     getSigner(): any {
         return this.wallet;
+    }
+
+    async redeemPosition(marketId: string, tokenId: string): Promise<{ success: boolean; amountUsd?: number; txHash?: string; error?: string }> {
+        if (!this.safeManager || !this.safeAddress) {
+            return { success: false, error: "Adapter not initialized" };
+        }
+        
+        const CTF_ADDRESS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045";
+        const USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"; // USDC.e on Polygon
+        
+        try {
+            const balanceBefore = await this.fetchBalance(this.safeAddress);
+            
+            const redeemTx = {
+                to: CTF_ADDRESS,
+                data: this.encodeRedeemPositions(
+                    USDC_ADDRESS,
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    marketId,
+                    [1, 2]
+                ),
+                value: "0"
+            };
+            
+            this.logger.info(`Submitting redeem tx for condition ${marketId.slice(0, 10)}...`);
+            const txHash = await this.safeManager.executeTransaction(redeemTx);
+            
+            await new Promise(r => setTimeout(r, 5000));
+            const balanceAfter = await this.fetchBalance(this.safeAddress);
+            const amountRedeemed = balanceAfter - balanceBefore;
+            
+            this.logger.success(`Redeem complete. Received: $${amountRedeemed.toFixed(2)} USDC`);
+            
+            return { 
+                success: true, 
+                amountUsd: amountRedeemed, 
+                txHash 
+            };
+            
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    }
+
+    private encodeRedeemPositions(
+        collateralToken: string,
+        parentCollectionId: string,
+        conditionId: string,
+        indexSets: number[]
+    ): string {
+        const iface = new Interface([
+            "function redeemPositions(address collateralToken, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets)"
+        ]);
+        
+        return iface.encodeFunctionData("redeemPositions", [
+            collateralToken,
+            parentCollectionId,
+            conditionId,
+            indexSets
+        ]);
     }
 }
