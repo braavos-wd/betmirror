@@ -125,6 +125,54 @@ export class BotEngine {
         }
     }
 
+    private async updateMarketState(position: ActivePosition): Promise<void> {
+        if (!this.exchange) return;
+        
+        try {
+            // Try to get market info from Polymarket API
+            const client = (this.exchange as any).getRawClient?.();
+            if (client) {
+                const market = await client.getMarket(position.marketId);
+                
+                if (market) {
+                    // Update market state based on market data
+                    position.marketClosed = market.closed || false;
+                    position.marketActive = market.active || false;
+                    position.marketAcceptingOrders = market.accepting_orders || false;
+                    position.marketArchived = market.archived || false;
+                    
+                    // Determine overall market state
+                    if (market.closed) {
+                        position.marketState = 'CLOSED';
+                    } else if (market.archived) {
+                        position.marketState = 'ARCHIVED';
+                    } else if (!market.active || !market.accepting_orders) {
+                        position.marketState = 'RESOLVED'; // Likely resolved if not accepting orders
+                    } else {
+                        position.marketState = 'ACTIVE';
+                    }
+                } else {
+                    // If market not found, it's likely resolved/archived
+                    position.marketState = 'RESOLVED';
+                    position.marketClosed = true;
+                    position.marketActive = false;
+                    position.marketAcceptingOrders = false;
+                }
+            }
+        } catch (e: any) {
+            // If we get a 404 or similar error, market is likely resolved
+            if (String(e).includes("404") || String(e).includes("Not Found")) {
+                position.marketState = 'RESOLVED';
+                position.marketClosed = true;
+                position.marketActive = false;
+                position.marketAcceptingOrders = false;
+            } else {
+                // For other errors, keep as ACTIVE but log
+                this.addLog('warn', `Failed to check market state for ${position.marketId}: ${e.message}`);
+            }
+        }
+    }
+
     public async syncPositions(forceChainSync = false): Promise<void> {
         if (!this.exchange) return;
         
@@ -181,8 +229,17 @@ export class BotEngine {
                             question: question,
                             image: image,
                             marketSlug: marketSlug,
-                            eventSlug: eventSlug
+                            eventSlug: eventSlug,
+                            // Add market state tracking
+                            marketState: 'ACTIVE',
+                            marketAcceptingOrders: true,
+                            marketActive: true,
+                            marketClosed: false,
+                            marketArchived: false
                         });
+                        
+                        // Check market state for each position
+                        await this.updateMarketState(enrichedPositions[enrichedPositions.length - 1]);
                     }
 
                     this.activePositions = enrichedPositions;

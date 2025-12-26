@@ -63,4 +63,10 @@ export interface ActivePosition {
   endDate?: string;
   marketSlug?: string;
   eventSlug?: string;
+  // Market State Tracking
+  marketState?: 'ACTIVE' | 'CLOSED' | 'RESOLVED' | 'ARCHIVED';
+  marketAcceptingOrders?: boolean;
+  marketActive?: boolean;
+  marketClosed?: boolean;
+  marketArchived?: boolean;
 }

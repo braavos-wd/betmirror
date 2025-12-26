@@ -2669,9 +2669,19 @@ return (
                                                 // Defensive ID Check
                                                 const safeMarketId = pos.marketId || "UNKNOWN";
                                                 const shortId = safeMarketId.length > 8 ? safeMarketId.slice(0, 8) : safeMarketId;
+                                                
+                                                // Determine market state styling and if redeemable
+                                                const isResolved = pos.marketState === 'RESOLVED' || pos.marketState === 'CLOSED';
+                                                const isRedeemable = isResolved;
+                                                const marketStateColor = {
+                                                    'ACTIVE': 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
+                                                    'CLOSED': 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400',
+                                                    'RESOLVED': 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
+                                                    'ARCHIVED': 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
+                                                }[pos.marketState || 'ACTIVE'];
 
                                                 return (
-                                                    <div key={safeMarketId + pos.outcome} className="text-xs p-3 bg-white dark:bg-white/5 rounded-xl border border-gray-200 dark:border-white/10 hover:border-blue-500/30 transition-all shadow-sm group">
+                                                    <div key={safeMarketId + pos.outcome} className={`text-xs p-3 bg-white dark:bg-white/5 rounded-xl border border-gray-200 dark:border-white/10 hover:border-blue-500/30 transition-all shadow-sm group ${isRedeemable ? 'ring-2 ring-yellow-400/50 ring-offset-2 ring-offset-white dark:ring-offset-black animate-pulse' : ''}`}>
                                                         {/* Card Header: Image & Title */}
                                                         <div className="flex gap-3 mb-3">
                                                             <div className="shrink-0 mt-1">
@@ -2701,6 +2711,11 @@ return (
                                                                 <div className="text-[10px] text-gray-500 mt-1 flex items-center gap-2">
                                                                     <span className="font-mono">{shortId}...</span>
                                                                     {pos.endDate && <span>• Ends {new Date(pos.endDate).toLocaleDateString()}</span>}
+                                                                    {pos.marketState && (
+                                                                        <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${marketStateColor}`}>
+                                                                            {pos.marketState}
+                                                                        </span>
+                                                                    )}
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -2734,23 +2749,37 @@ return (
                                                                 {isProfitable ? '+' : ''}{pnl.toFixed(2)} ({pnlPercent.toFixed(1)}%)
                                                             </div>
                                                             <div className="flex items-center gap-1">
-                                                                {/* Order Status Indicator */}
-                                                                <button 
-                                                                    onClick={() => handleOpenOrderModal(pos)}
-                                                                    className="px-2 py-1.5 bg-blue-50 dark:bg-blue-900/10 hover:bg-blue-100 dark:hover:bg-blue-900/20 text-blue-600 dark:text-blue-400 text-[10px] font-bold rounded border border-blue-200 dark:border-blue-900/30 transition-colors flex items-center gap-1"
-                                                                    title="Manage Orders & Redeem"
-                                                                >
-                                                                    <Activity size={10}/>
-                                                                    ORDERS
-                                                                </button>
-                                                                <button 
-                                                                    onClick={() => handleManualExit(pos)}
-                                                                    disabled={exitingPositionId === (safeMarketId + pos.outcome)}
-                                                                    className="px-3 py-1.5 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 text-[10px] font-bold rounded border border-red-200 dark:border-red-900/30 transition-colors flex items-center gap-1"
-                                                                >
-                                                                    {exitingPositionId === (safeMarketId + pos.outcome) ? <Loader2 size={10} className="animate-spin"/> : <X size={10}/>}
-                                                                    SELL
-                                                                </button>
+                                                                {/* Show Redeem button for resolved markets */}
+                                                                {isRedeemable ? (
+                                                                    <button 
+                                                                        onClick={() => handleOpenOrderModal(pos)}
+                                                                        className="px-3 py-1.5 bg-yellow-500 hover:bg-yellow-600 text-white text-[10px] font-bold rounded border border-yellow-600 transition-colors flex items-center gap-1 animate-pulse"
+                                                                        title="Redeem Winnings"
+                                                                    >
+                                                                        <Trophy size={10}/>
+                                                                        REDEEM
+                                                                    </button>
+                                                                ) : (
+                                                                    <>
+                                                                        {/* Order Status Indicator */}
+                                                                        <button 
+                                                                            onClick={() => handleOpenOrderModal(pos)}
+                                                                            className="px-2 py-1.5 bg-blue-50 dark:bg-blue-900/10 hover:bg-blue-100 dark:hover:bg-blue-900/20 text-blue-600 dark:text-blue-400 text-[10px] font-bold rounded border border-blue-200 dark:border-blue-900/30 transition-colors flex items-center gap-1"
+                                                                            title="Manage Orders & Redeem"
+                                                                        >
+                                                                            <Activity size={10}/>
+                                                                            ORDERS
+                                                                        </button>
+                                                                        <button 
+                                                                            onClick={() => handleManualExit(pos)}
+                                                                            disabled={exitingPositionId === (safeMarketId + pos.outcome)}
+                                                                            className="px-3 py-1.5 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 text-[10px] font-bold rounded border border-red-200 dark:border-red-900/30 transition-colors flex items-center gap-1"
+                                                                        >
+                                                                            {exitingPositionId === (safeMarketId + pos.outcome) ? <Loader2 size={10} className="animate-spin"/> : <X size={10}/>}
+                                                                            SELL
+                                                                        </button>
+                                                                    </>
+                                                                )}
                                                             </div>
                                                         </div>
                                                     </div>
